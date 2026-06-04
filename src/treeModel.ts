@@ -121,14 +121,19 @@ function assignMarks(root: MinimalNode): void {
  * children positionally (mirroring `flexMetadata.mergeNode`). On the RUNTIME side
  * the internal `CameraActor` children are SKIPPED so that only the user's content
  * children align to the parser's children. The matched runtime node receives the
- * absolute source line `parserNode.sourceLine + startLine`.
+ * 1-BASED absolute source line `parserNode.sourceLine + startLine + 1`.
+ *
+ * The parser emits a 0-based line and `startLine` is a 0-based file offset; the
+ * public `sourceLine` contract is 1-based (a node on file line 21 reports `21`),
+ * so the `+1` is applied HERE, at the output boundary, leaving the parser's
+ * internal 0-based emission unchanged.
  *
  * On any count divergence, only what aligns is merged and the rest is left
  * untouched — this never throws.
  */
 function mergeSourceLine(runtime: MinimalNode, parser: SceneNode, startLine: number): void {
     if (typeof parser.sourceLine === 'number') {
-        runtime.sourceLine = parser.sourceLine + startLine;
+        runtime.sourceLine = parser.sourceLine + startLine + 1;
     }
 
     const runtimeChildren = Array.isArray(runtime.children) ? runtime.children : [];

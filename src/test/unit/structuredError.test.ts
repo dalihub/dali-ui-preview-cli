@@ -54,10 +54,11 @@ describe('M5 structured errors (F5.3)', () => {
     });
 
     describe('cli.mapRenderError', () => {
-        it('maps a compile RenderError to {phase, message, sourceLine} with the real template offset + startLine', () => {
+        it('maps a compile RenderError to {phase, message, sourceLine} (1-based) with the real template offset + startLine', () => {
             // Use the REAL template offset (what the CLI uses) so the math is the
-            // production math. Put the error K=3 user-lines into the user code, with
-            // a startLine of 10 → absolute sourceLine = 3 + 10 = 13.
+            // production math. Put the error K=3 user-lines (0-based) into the user
+            // code, with a startLine of 10. sourceLine is the 1-based file line, so
+            // it is userLine(3) + startLine(10) + 1 = 14.
             const offset = userCodeOffset();
             const startLine = 10;
             const userLine = 3; // 0-based, within user code
@@ -69,7 +70,21 @@ describe('M5 structured errors (F5.3)', () => {
 
             expect(structured.phase).to.equal('compile');
             expect(structured.message).to.equal("expected ';' before '}' token");
-            expect(structured.sourceLine).to.equal(userLine + startLine);
+            expect(structured.sourceLine).to.equal(userLine + startLine + 1);
+        });
+
+        it('reports sourceLine 1 (not 0) for a single-line --code compile error', () => {
+            // --code has no source file → startLine 0. An error on the FIRST user line
+            // (0-based user line 0) must surface as the 1-based sourceLine 1, never 0.
+            const offset = userCodeOffset();
+            const gccLine = offset + 0; // error on user line 0
+            const stderr = `/work/preview_harness.cpp:${gccLine}:8: error: 'Banana' has not been declared`;
+            const err = new RenderError('Container render failed', stderr, 2, 'compile');
+
+            const structured = mapRenderError(err, resolved('return Banana::New("x");', 0));
+
+            expect(structured.phase).to.equal('compile');
+            expect(structured.sourceLine).to.equal(1);
         });
 
         it('falls back to formatRawError + null sourceLine when no g++ line maps (render phase)', () => {

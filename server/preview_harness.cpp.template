@@ -188,13 +188,18 @@ void CollectActorMetadata(Actor actor, std::ostringstream& json,
     // user set via SetTextColor), background color for other Views, transparent
     // for non-View actors. Actor::Property::COLOR is intentionally avoided — that
     // is the tint multiplier (always white by default), not the user's color.
+    // Displayed text (vision-critical): the rendered text of a Label/InputField,
+    // captured via Label::GetText()/InputField::GetText() (Dali::String, UTF-8) so
+    // the tree carries what the user actually SEES — e.g. "Hello, Dali!" — which is
+    // otherwise absent (the actor NAME is empty). Emitted only when non-empty.
     Vector4 color(0.0f, 0.0f, 0.0f, 0.0f);
     const char* colorKey = "backgroundColor";
+    std::string nodeText;
     {
         Label      label = Label::DownCast(actor);
         InputField input = InputField::DownCast(actor);
-        if(label)      { color = label.GetTextColor(); colorKey = "textColor"; }
-        else if(input) { color = input.GetTextColor(); colorKey = "textColor"; }
+        if(label)      { color = label.GetTextColor(); colorKey = "textColor"; nodeText = std::string(label.GetText().CStr()); }
+        else if(input) { color = input.GetTextColor(); colorKey = "textColor"; nodeText = std::string(input.GetText().CStr()); }
         else {
             View view = View::DownCast(actor);
             if(view) color = view.GetBackgroundColor();
@@ -210,8 +215,14 @@ void CollectActorMetadata(Actor actor, std::ostringstream& json,
     json << "{\"id\":\"" << JsonEscapeStr(idPrefix) << "\","
          << "\"type\":\"" << JsonEscapeStr(typeName) << "\","
          << "\"role\":\"" << JsonEscapeStr(role) << "\","
-         << "\"name\":\"" << JsonEscapeStr(nodeName) << "\","
-         << "\"bounds\":{"
+         << "\"name\":\"" << JsonEscapeStr(nodeName) << "\",";
+    // Displayed text, when the control has any (Label/InputField). Emitted only when
+    // non-empty so non-text actors stay lean; passes through treeModel untouched.
+    if(!nodeText.empty())
+    {
+        json << "\"text\":\"" << JsonEscapeStr(nodeText) << "\",";
+    }
+    json << "\"bounds\":{"
          << "\"x\":" << bx << ",\"y\":" << by << ",\"w\":" << bw << ",\"h\":" << bh
          << "},"
          << "\"visible\":" << (visible ? "true" : "false") << ","

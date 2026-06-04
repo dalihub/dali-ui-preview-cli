@@ -59,7 +59,7 @@ stdout (a single JSON line; pretty-printed here):
   "mark": 1,
   "bounds": { "x": 0, "y": 0, "w": 1024, "h": 600 },
   "children": [
-    { "id": "0/0", "type": "CameraActor", "name": "", "mark": 2, "bounds": { "x": 0, "y": 0, "w": 0, "h": 0 }, "children": [] },
+    { "id": "0/0", "type": "CameraActor", "role": "camera", "name": "", "mark": 2, "bounds": { "x": 0, "y": 0, "w": 0, "h": 0 }, "visible": true, "opacity": 1, "children": [] },
     {
       "id": "0/1",
       "type": "FlexLayoutImpl",
@@ -67,16 +67,23 @@ stdout (a single JSON line; pretty-printed here):
       "name": "",
       "mark": 3,
       "bounds": { "x": 0, "y": 0, "w": 1024, "h": 600 },
-      "flexProps": ["direction", "alignItems", "justifyContent", "wrap"],
+      "visible": true,
+      "opacity": 1,
+      "flexProps": { "direction": "COLUMN", "alignItems": "CENTER", "justifyContent": "CENTER", "wrap": "NO_WRAP" },
+      "sourceLine": 13,
+      "semanticsSource": "bridge",
       "children": [
         {
           "id": "0/1/0",
           "type": "LabelImpl",
           "role": "label",
-          "name": "Hello, Dali!",
+          "name": "",
+          "text": "Hello, Dali!",
           "mark": 4,
           "bounds": { "x": 381, "y": 262, "w": 262, "h": 56 },
-          "sourceLine": 20,
+          "visible": true,
+          "opacity": 1,
+          "sourceLine": 21,
           "semanticsSource": "bridge",
           "children": []
         },
@@ -84,19 +91,25 @@ stdout (a single JSON line; pretty-printed here):
           "id": "0/1/1",
           "type": "LabelImpl",
           "role": "label",
-          "name": "Edit this file to see the preview update",
+          "name": "",
+          "text": "Edit this file to see the preview update",
           "mark": 5,
           "bounds": { "x": 251, "y": 322, "w": 522, "h": 22 },
-          "sourceLine": 24,
+          "visible": true,
+          "opacity": 1,
+          "sourceLine": 25,
           "semanticsSource": "bridge",
           "children": []
         }
       ]
-    }
+    },
+    { "id": "0/2", "type": "CameraActor", "role": "camera", "name": "", "mark": 6, "bounds": { "x": 0, "y": 0, "w": 0, "h": 0 }, "visible": true, "opacity": 1, "children": [] }
   ],
   "meta": { "resolution": { "w": 1024, "h": 600 }, "theme": "dark", "dpr": 1 }
 }
 ```
+
+(The tree has **6** nodes: the root `Layer`, the `FlexLayoutImpl`, its two `LabelImpl`s, and the two internal `CameraActor`s DALi inserts as leading/trailing siblings. A label's `name` is empty — its displayed text is in `text`.)
 
 Also write the screenshot:
 
@@ -164,10 +177,13 @@ node out/cli.js samples/hello-dali.preview.dali.cpp --format tree
 ```text
 Layer "RootLayer" #1  [0]  (1024x600 @ 0,0)
 ┠╴ CameraActor "" #2  [0/0]  (0x0 @ 0,0)
-┖╴ FlexLayoutImpl "" #3  [0/1]  (1024x600 @ 0,0)
-   ┠╴ LabelImpl "Hello, Dali!" #4  [0/1/0]  (262x56 @ 381,262)
-   ┖╴ LabelImpl "Edit this file to see the preview update" #5  [0/1/1]  (522x22 @ 251,322)
+┠╴ FlexLayoutImpl "" #3  [0/1]  (1024x600 @ 0,0)
+┃  ┠╴ LabelImpl "" #4  [0/1/0]  (262x56 @ 381,262)
+┃  ┖╴ LabelImpl "" #5  [0/1/1]  (522x22 @ 251,322)
+┖╴ CameraActor "" #6  [0/2]  (0x0 @ 0,0)
 ```
+
+(The box-tree line shows the actor `name`, which is empty for labels; the displayed text lives in the JSON `text` field.)
 
 ### Self-contained report — `--report`
 
@@ -256,12 +272,15 @@ Every node in the tree has this shape (some fields are best-effort and may be ab
 | `mark` | number | 1-based ordinal; the number drawn on `--overlay`. |
 | `type` | string | Concrete DALi type, e.g. `"LabelImpl"`, `"FlexLayoutImpl"`, `"Layer"`. |
 | `role` | string | Semantic role, e.g. `"label"`, `"container"`, `"panel"`. |
-| `name` | string | Actor name / label text (may be empty). |
+| `name` | string | Actor name (often empty; the root is `"RootLayer"`). A label's displayed text is in `text`, not here. |
+| `text` | string | The displayed text of a text control (Label / InputField). Present only when the control has non-empty text. |
 | `bounds` | `{x,y,w,h}` | On-screen box in image pixels (`CalculateCurrentScreenExtents`). |
+| `visible` | boolean | The actor's `VISIBLE` property. |
+| `opacity` | number | The actor's `OPACITY` (0..1). |
 | `sourceLine` | number | 1-based line in your source the node maps to (when resolvable). |
 | `semanticsSource` | string | `"bridge"` or `"reconstructed"` — where the semantics came from. |
-| `properties` | object | Exported DALi properties for the node. |
-| `flexProps` | string[] | Present on flex containers: which flex properties are set. |
+| `properties` | object | Exported DALi properties for the node (e.g. `{ "textColor": [r,g,b,a] }` or `{ "backgroundColor": [...] }`). |
+| `flexProps` | object | Present on flex containers: the resolved flex layout, e.g. `{ "direction": "COLUMN", "alignItems": "CENTER", "justifyContent": "CENTER", "wrap": "NO_WRAP" }`. |
 | `children` | node[] | Child nodes, in child-index order. |
 
 The **root** node additionally carries `meta`:

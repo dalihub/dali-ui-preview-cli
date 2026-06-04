@@ -169,10 +169,11 @@ describe('treeModel.buildTree', () => {
             expect(labels[0].sourceLine).to.be.a('number');
             expect(labels[1].sourceLine).to.be.a('number');
 
-            // FlexLayout::New() is on line 0; both labels on line 1 (0-based).
-            expect(flex.sourceLine).to.equal(0);
-            expect(labels[0].sourceLine).to.equal(1);
-            expect(labels[1].sourceLine).to.equal(1);
+            // sourceLine is 1-based at the output boundary (F1.5): FlexLayout::New()
+            // is on file line 1; both labels on file line 2.
+            expect(flex.sourceLine).to.equal(1);
+            expect(labels[0].sourceLine).to.equal(2);
+            expect(labels[1].sourceLine).to.equal(2);
 
             // CameraActor siblings must NOT receive a sourceLine.
             const cameras = (root.children as MinimalNode[]).filter(
@@ -184,13 +185,60 @@ describe('treeModel.buildTree', () => {
             }
         });
 
-        it('honours opts.startLine when merging sourceLine', () => {
+        it('honours opts.startLine when merging sourceLine (1-based result)', () => {
+            // startLine is the 0-based file offset; the emitted sourceLine is 1-based,
+            // so FlexLayout (parser line 0) → 0+10+1 = 11, labels (parser line 1) → 12.
             const root = buildTree(fixtureMetadata(), { sourceCode, startLine: 10 });
             const flex = (root.children as MinimalNode[])[1];
             const labels = flex.children as MinimalNode[];
-            expect(flex.sourceLine).to.equal(10);
-            expect(labels[0].sourceLine).to.equal(11);
-            expect(labels[1].sourceLine).to.equal(11);
+            expect(flex.sourceLine).to.equal(11);
+            expect(labels[0].sourceLine).to.equal(12);
+            expect(labels[1].sourceLine).to.equal(12);
+        });
+
+        it('reports 1-based file lines for the canonical preview-file sample', () => {
+            // Regression for the off-by-one (0-based) sourceLine bug: with the real
+            // hello-dali sample (preview-file mode → startLine 0), the FlexLayout is
+            // on file line 13, "Hello, Dali!" on 21, the second label on 25. The
+            // emitted sourceLine MUST equal those 1-based file lines.
+            const sampleCode = [
+                '// hello-dali.preview.dali.cpp',          // 1
+                '//',                                       // 2
+                '// Welcome to DALi Preview!',              // 3
+                '//',                                       // 4
+                '// line 5',                                // 5
+                '// line 6',                                // 6
+                '// line 7',                                // 7
+                '// line 8',                                // 8
+                '// line 9',                                // 9
+                '// line 10',                               // 10
+                '// line 11',                               // 11
+                '',                                         // 12
+                'return FlexLayout::New()',                 // 13
+                '    .SetDirection(FlexDirection::COLUMN)',  // 14
+                '    .SetAlignItems(FlexAlign::CENTER)',     // 15
+                '    .SetJustifyContent(FlexJustify::CENTER)', // 16
+                '    .SetRequestedWidth(MATCH_PARENT)',      // 17
+                '    .SetRequestedHeight(MATCH_PARENT)',     // 18
+                '    .SetBackgroundColor(UiColor(0x1e1e2e))', // 19
+                '    .Children({',                           // 20
+                '        Label::New("Hello, Dali!")',        // 21
+                '            .SetFontSize(48)',              // 22
+                '            .SetTextColor(UiColor(0xFFFFFF)),', // 23
+                '',                                         // 24
+                '        Label::New("Edit this file to see the preview update")', // 25
+                '            .SetFontSize(18)',              // 26
+                '            .SetTextColor(UiColor(0x888899)),', // 27
+                '    });',                                   // 28
+            ].join('\n');
+
+            const root = buildTree(fixtureMetadata(), { sourceCode: sampleCode });
+            const flex = (root.children as MinimalNode[])[1];
+            const labels = flex.children as MinimalNode[];
+
+            expect(flex.sourceLine).to.equal(13);
+            expect(labels[0].sourceLine).to.equal(21);
+            expect(labels[1].sourceLine).to.equal(25);
         });
 
         it('adds no sourceLine and does not throw when sourceCode is omitted', () => {

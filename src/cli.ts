@@ -66,9 +66,10 @@ const DEFAULT_DPR = 1;
 
 /**
  * The structured compile/render error printed (as JSON) to STDERR on a
- * {@link RenderError} (F5.3). `sourceLine` is the user's absolute source line the
- * first diagnostic maps to, or null when none could be mapped (e.g. the error is
- * in harness boilerplate, or it is a render-phase failure with no g++ line).
+ * {@link RenderError} (F5.3). `sourceLine` is the user's 1-based absolute source
+ * line the first diagnostic maps to, or null when none could be mapped (e.g. the
+ * error is in harness boilerplate, or it is a render-phase failure with no g++
+ * line).
  */
 export interface StructuredError {
   phase: RenderError['phase'];
@@ -743,7 +744,21 @@ async function runVerifyOrUpdate(parsed: RenderArgs, resolved: ResolvedInput): P
     // Verify: compute whichever diffs were requested, then the combined verdict.
     let image: ImageDiffResult | undefined;
     if (parsed.baseline !== undefined) {
-      image = await imageDiff(result.pngPath, parsed.baseline, { failRatio: parsed.threshold });
+      // Write the visual diff PNG next to the BASELINE (a persistent, user-owned
+      // dir) rather than imageDiff's default location next to the actual PNG —
+      // the actual lives in `workDir`, which the `finally` below deletes, leaving
+      // the advertised `diffPngPath` dangling. Next-to-baseline survives cleanup,
+      // so the verdict's `diffPngPath` points at a file that still exists.
+      const baselinePath = parsed.baseline;
+      const baseExt = path.extname(baselinePath);
+      const diffPngPath = path.join(
+        path.dirname(baselinePath),
+        `${path.basename(baselinePath, baseExt)}.diff.png`,
+      );
+      image = await imageDiff(result.pngPath, baselinePath, {
+        failRatio: parsed.threshold,
+        diffPngPath,
+      });
     }
     let treeResult: TreeDiffResult | undefined;
     if (parsed.baselineTree !== undefined) {
@@ -766,9 +781,12 @@ async function runVerifyOrUpdate(parsed: RenderArgs, resolved: ResolvedInput): P
  * source line via the vendored gcc parser (F5.3): read the RAW harness template
  * (where `{{USER_CODE}}` still exists) to get the 1-based offset, run
  * `parseGccErrors` (which returns a 0-based user-relative line), and add
- * `resolved.startLine` (the source's absolute offset in its file) to the FIRST
- * parsed error. Returns the diagnostic's message + that absolute line, or
- * `formatRawError(stderr)` + null when nothing maps (boilerplate / render-phase).
+ * `resolved.startLine` (the source's absolute 0-based offset in its file) to the
+ * FIRST parsed error. The public `sourceLine` contract is 1-BASED (matching the
+ * tree's `sourceLine`), so `+1` is applied at this output boundary — a single-line
+ * `--code` compile error (startLine 0, user line 0) reports `1`, not `0`. Returns
+ * the diagnostic's message + that 1-based line, or `formatRawError(stderr)` + null
+ * when nothing maps (boilerplate / render-phase).
  */
 export function mapRenderError(err: RenderError, resolved: ResolvedInput): StructuredError {
   const offset = userCodeOffset();
@@ -778,7 +796,7 @@ export function mapRenderError(err: RenderError, resolved: ResolvedInput): Struc
     return {
       phase: err.phase,
       message: first.message,
-      sourceLine: first.line + (resolved.startLine ?? 0),
+      sourceLine: first.line + (resolved.startLine ?? 0) + 1,
     };
   }
   return {
