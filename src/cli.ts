@@ -2,16 +2,15 @@
 /*
  * dali-ui-preview CLI entrypoint.
  *
- * Default command (M0/WU-4): `dali-ui-preview <input> --image <out.png>` resolves
- * the preview code from <input>, templates the DALi harness, renders it inside the
- * runtime container, and copies the produced PNG to <out.png>. Printing the scene
- * tree to stdout lands in WU-5 — until then stdout stays empty/parseable and ALL
- * diagnostics go to stderr.
+ * Default command (M0): `dali-ui-preview <input> --image <out.png>` resolves the
+ * preview code from <input>, templates the DALi harness, renders it inside the
+ * runtime container, copies the produced PNG to <out.png> (WU-4), and prints the
+ * minimal scene tree as JSON to stdout (WU-5).
  *
  * Logging convention (project CLAUDE.md, adapted for a CLI): there is no vscode
- * outputChannel here, and stdout is reserved for the machine contract (later: the
- * JSON node tree). So diagnostics go to stderr via console.error; only the
- * `--version` / `--help` text legitimately prints to stdout.
+ * outputChannel here, and stdout is RESERVED for the machine contract (the JSON
+ * node tree, and `--version`/`--help` text). All diagnostics go to stderr via
+ * console.error so a caller can pipe stdout straight into a JSON parser.
  */
 
 import * as fs from 'fs';
@@ -19,6 +18,7 @@ import * as path from 'path';
 import { resolveInput } from './inputResolver';
 import { templateHarness } from './harnessTemplater';
 import { renderInContainer, cleanupWorkDir } from './dockerRunner';
+import { buildTree } from './treeModel';
 
 const USAGE = 'Usage: dali-ui-preview <input.cpp> --image <out.png>   (or --version | --help)';
 
@@ -88,10 +88,11 @@ function parseRenderArgs(argv: string[]): RenderArgs {
 }
 
 /**
- * Render command: resolve → template → render in container → copy PNG out.
+ * Render command: resolve → template → render in container → copy PNG out →
+ * print the minimal scene tree as JSON to stdout.
  *
- * STDOUT is kept clean (no tree print until WU-5); every diagnostic goes to
- * stderr. Returns the process exit code.
+ * STDOUT carries ONLY the JSON tree (the machine contract, Inv-6); every
+ * diagnostic goes to stderr. Returns the process exit code.
  */
 async function runRender(argv: string[]): Promise<number> {
   let parsed: RenderArgs;
@@ -116,6 +117,10 @@ async function runRender(argv: string[]): Promise<number> {
     await fs.promises.mkdir(destDir, { recursive: true });
     await fs.promises.copyFile(result.pngPath, parsed.imageOut);
 
+    // Emit the minimal scene tree as JSON to stdout (the machine contract).
+    const tree = buildTree(result.metadataJson);
+    process.stdout.write(`${JSON.stringify(tree)}\n`);
+
     return 0;
   } catch (err) {
     console.error(`dali-ui-preview: ${err instanceof Error ? err.message : String(err)}`);
@@ -138,7 +143,7 @@ async function main(argv: string[]): Promise<number> {
     return 0;
   }
 
-  // Default command: render <input> and write the PNG to --image.
+  // Default command: render <input>, write the PNG to --image, print the tree.
   return runRender(argv);
 }
 

@@ -30,3 +30,11 @@
 - **Retry**: 1 within WU-4 (budget 3) — first render reported "no OK: marker"; root cause: DALi's ANSI-colored stdout prefixes the harness `OK:` line with a reset seq, defeating the start-of-line regex. Fix: strip ANSI in `dockerRunner` before marker detection. Re-render → PASS.
 - **Bonus (F0.5 spike evidence)**: container output confirms D-Bus/AT-SPI is DOWN headless ("cannot get dbus connection", "Accessibility Status DbusClient is not ready"); render proceeds fine with accessibility disabled.
 - **Verdict: PASS (Tier 2 + vision ✋)**
+
+## WU-5 — Minimal JSON tree on stdout  [F0.4, Tier 2]
+- **Gate A**: `npm run build` (0 errors) → PASS
+- **Gate B (F0.4, verbatim)**: same invocation → stdout is valid JSON; root `type="Layer"` (stamped on the synthetic RootLayer, which the harness emits without a type), `children=3`, `child[0].type="CameraActor"` → PASS
+- **stdout cleanliness (Inv-6)**: single clean JSON value (924 B); diagnostics on stderr only
+- No regression: PNG still produced (F0.3 green)
+- ✋: none
+- **Verdict: PASS (Tier 2)**
