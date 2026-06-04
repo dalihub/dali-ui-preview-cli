@@ -16,3 +16,9 @@
 - Vendored: `samples/hello-dali.preview.dali.cpp`, `server/preview_harness.cpp.template`, `src/cppParser.ts`, `src/flexMetadata.ts`, `src/errorParser.ts` (vscode-STRIPPED: dropped `import vscode` + `errorsToDiagnostics`; kept parse/offset/format + `ParsedError`). Provenance headers added (ADR-007).
 - ✋: none
 - **Verdict: PASS (Tier 3)**
+
+## WU-3 — Input resolver + harness templater  [enables F0.3/F0.4, Tier 3 build smoke]
+- **Gate A**: `npm run build` (0 errors) → PASS
+- **Functional (WU-3 acceptance, stronger than build-only)**: `resolveInput(sample)` → preview-file mode, startLine 0, code has 'Hello, Dali!'; `templateHarness(code)` → 11703-char C++ with ZERO `{{...}}` placeholders, embedding user code + `/work/preview.png` + `/work/tree.json` + `1024`/`600` → PASS
+- ✋: none
+- **Verdict: PASS (Tier 3 + functional placeholder check)**
