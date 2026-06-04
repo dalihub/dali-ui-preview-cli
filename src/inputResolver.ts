@@ -1,19 +1,26 @@
 /*
- * inputResolver.ts — resolve a CLI input file path to raw preview C++ + a
- * 0-based start line, for the dali-ui-preview CLI (M0/WU-3).
+ * inputResolver.ts — resolve CLI input to raw preview C++ + a 0-based start
+ * line, for the dali-ui-preview CLI (M1/WU-3).
  *
- * Two input shapes are supported in M0:
+ * Four input shapes are supported:
  *
  *   1. Preview-file mode — a `*.preview.dali.cpp` file whose ENTIRE body is the
  *      preview code (comments + a trailing `return TypeName::New()...;`). The
  *      whole file is the code and `startLine` is 0.
  *
- *   2. Marker mode — a regular `.cpp` / `.h` file with a preview region delimited
- *      by `// @dali-preview-begin` / `// @dali-preview-end` line comments. The
- *      region between the markers (exclusive) is the code, and `startLine` is the
- *      0-based index of the first line AFTER the begin marker.
+ *   2. Marker mode — a regular `.cpp` / `.h` file (or a code block) with a
+ *      preview region delimited by `// @dali-preview-begin` /
+ *      `// @dali-preview-end` line comments. The region between the markers
+ *      (exclusive) is the code, and `startLine` is the 0-based index of the
+ *      first line AFTER the begin marker.
  *
- * stdin / inline-snippet modes are out of scope for M0 (later milestones).
+ *   3. Inline mode — a code block supplied directly (e.g. via `--code`): if it
+ *      contains the marker pair the region is extracted (reported as `marker`),
+ *      otherwise the whole text is the preview code with `startLine` 0.
+ *
+ *   4. Stdin mode — the same as inline, but the code block is read from
+ *      `process.stdin` (piped). The whole text is the preview code; the source
+ *      path is reported as `<stdin>`.
  *
  * Logging convention (project CLAUDE.md, adapted for a CLI): stdout is reserved
  * for the machine contract (the JSON node tree), so this module never writes to
@@ -32,7 +39,7 @@ export interface ResolvedInput {
      */
     startLine: number;
     /** Which extraction shape matched. */
-    mode: 'preview-file' | 'marker';
+    mode: 'preview-file' | 'marker' | 'inline' | 'stdin';
     /** Absolute or caller-supplied path of the resolved source file. */
     sourcePath: string;
 }
@@ -75,32 +82,16 @@ export function resolveInput(filePath: string): ResolvedInput {
 
     // --- Mode 2: marker-delimited region inside a regular .cpp / .h ---
     if (filePath.endsWith('.cpp') || filePath.endsWith('.h')) {
-        const lines = raw.split('\n');
-        let beginLine = -1;
-        let endLine = -1;
-
-        for (let i = 0; i < lines.length; i++) {
-            const text = lines[i].trim();
-            if (text === MARKER_BEGIN) {
-                beginLine = i;
-            } else if (text === MARKER_END && beginLine >= 0) {
-                endLine = i; // first complete pair wins
-                break;
-            }
-        }
-
-        if (beginLine < 0 || endLine < 0 || endLine <= beginLine + 1) {
+        const region = extractMarkerRegion(raw);
+        if (region === null) {
             throw new Error(
                 `No preview region found in '${filePath}': expected a ` +
                 `'${MARKER_BEGIN}' / '${MARKER_END}' marker pair with code between them.`,
             );
         }
-
-        // Lines strictly between the two markers (markers excluded).
-        const code = lines.slice(beginLine + 1, endLine).join('\n');
         return {
-            code,
-            startLine: beginLine + 1,
+            code: region.code,
+            startLine: region.startLine,
             mode: 'marker',
             sourcePath: filePath,
         };
@@ -110,4 +101,91 @@ export function resolveInput(filePath: string): ResolvedInput {
         `Unsupported input '${filePath}': expected a '*${PREVIEW_FILE_SUFFIX}' file ` +
         `or a '.cpp' / '.h' file with '${MARKER_BEGIN}' / '${MARKER_END}' markers.`,
     );
+}
+
+/**
+ * Extract the first complete `@dali-preview-begin` / `@dali-preview-end` region
+ * from `raw`. Returns the code strictly between the markers (markers excluded)
+ * and the 0-based index of the first line after the begin marker, or `null` if
+ * no complete, non-empty marker pair is present.
+ */
+function extractMarkerRegion(raw: string): { code: string; startLine: number } | null {
+    const lines = raw.split('\n');
+    let beginLine = -1;
+    let endLine = -1;
+
+    for (let i = 0; i < lines.length; i++) {
+        const text = lines[i].trim();
+        if (text === MARKER_BEGIN) {
+            beginLine = i;
+        } else if (text === MARKER_END && beginLine >= 0) {
+            endLine = i; // first complete pair wins
+            break;
+        }
+    }
+
+    if (beginLine < 0 || endLine < 0 || endLine <= beginLine + 1) {
+        return null;
+    }
+
+    // Lines strictly between the two markers (markers excluded).
+    return {
+        code: lines.slice(beginLine + 1, endLine).join('\n'),
+        startLine: beginLine + 1,
+    };
+}
+
+/**
+ * Resolve a code block (supplied inline, e.g. via `--code`) to preview C++ and a
+ * 0-based start line. If `code` contains a `@dali-preview-begin` /
+ * `@dali-preview-end` marker pair, only that region is used (mode `'marker'`,
+ * `startLine` pointing at the first line after the begin marker). Otherwise the
+ * ENTIRE text is treated as the preview code (mode `'inline'`, `startLine` 0).
+ *
+ * Unlike {@link resolveInput} there is no file extension to dispatch on and no
+ * filesystem read — the text is the source of truth, so this never throws for an
+ * "unsupported" shape (an empty/whitespace block simply becomes empty code and
+ * fails later at the harness/render stage, where the diagnostic is meaningful).
+ *
+ * @param code        The raw preview code block.
+ * @param sourcePath  Caller-supplied provenance label for diagnostics
+ *                    (defaults to `'<code>'`; the stdin path passes `'<stdin>'`).
+ * @returns           The resolved code, its mode, the source label, and `startLine`.
+ */
+export function resolveFromCode(code: string, sourcePath = '<code>'): ResolvedInput {
+    const region = extractMarkerRegion(code);
+    if (region !== null) {
+        return {
+            code: region.code,
+            startLine: region.startLine,
+            mode: 'marker',
+            sourcePath,
+        };
+    }
+
+    return {
+        code,
+        startLine: 0,
+        mode: 'inline',
+        sourcePath,
+    };
+}
+
+/**
+ * Resolve preview code read from standard input (a piped code block). Reads ALL
+ * of `process.stdin` to a UTF-8 string, then delegates to {@link resolveFromCode}
+ * with the `'<stdin>'` provenance label. The reported mode is `'stdin'` (a
+ * marker pair inside the piped text is still extracted — the begin/end region —
+ * but the mode stays `'stdin'` so callers can see the input arrived on stdin).
+ *
+ * @returns  The resolved code, mode `'stdin'`, source `'<stdin>'`, and `startLine`.
+ */
+export async function resolveFromStdin(): Promise<ResolvedInput> {
+    const chunks: Buffer[] = [];
+    for await (const chunk of process.stdin) {
+        chunks.push(typeof chunk === 'string' ? Buffer.from(chunk) : chunk);
+    }
+    const text = Buffer.concat(chunks).toString('utf8');
+    const resolved = resolveFromCode(text, '<stdin>');
+    return { ...resolved, mode: 'stdin' };
 }
