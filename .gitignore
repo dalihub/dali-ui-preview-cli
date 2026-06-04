@@ -4,3 +4,6 @@ node_modules/
 # c8 coverage output
 coverage/
 .nyc_output/
+
+# image-diff artifacts
+*.diff.png
