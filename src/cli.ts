@@ -28,6 +28,9 @@ import { formatTree } from './formatters/treeFormatter';
 import { writeReport } from './formatters/reportFormatter';
 import { truncate } from './treeTruncate';
 import { runWatch } from './watch';
+import { imageDiff, ImageDiffResult } from './diff/imageDiff';
+import { treeDiff, TreeDiffResult } from './diff/treeDiff';
+import { buildVerdict, verdictExitCode } from './diff/verdict';
 
 const USAGE =
   'Usage: dali-ui-preview <input.cpp | -> [--image <out.png>]\n' +
@@ -40,6 +43,10 @@ const USAGE =
   '       dali-ui-preview <input.cpp> --at X,Y              (print the topmost node at a pixel)\n' +
   '       dali-ui-preview <input.cpp> --node <id>           (print that node id\'s region)\n' +
   '       dali-ui-preview <input.cpp> --watch               (re-render on file change; FILE input only)\n' +
+  '       dali-ui-preview <input.cpp> --baseline <png> [--baseline-tree <json>] [--threshold <ratio>]\n' +
+  '                                                          (verify the render; print a verdict, exit 0 match / 20 diverged)\n' +
+  '       dali-ui-preview <input.cpp> --update-baseline --baseline <png> [--baseline-tree <json>]\n' +
+  '                                                          (write the current render as the new baseline; exit 0)\n' +
   '   (or --version | --help)\n' +
   '\n' +
   'Reads preview code from a file, from STDIN (a `-` positional or a piped\n' +
@@ -51,7 +58,11 @@ const USAGE =
   '--at/--node print ONLY their lookup JSON (a bare render prints the full tree);\n' +
   'they are mutually exclusive. --overlay writes an annotated PNG and is\n' +
   'orthogonal to stdout (the full tree is still printed unless a query flag is set).\n' +
-  '--watch requires a FILE input (not stdin / --code).';
+  '--watch requires a FILE input (not stdin / --code).\n' +
+  '--baseline / --baseline-tree VERIFY the render: stdout becomes a single verdict\n' +
+  'JSON (image-diff and/or id-keyed tree-diff vs the baseline) and the exit code is\n' +
+  '0 when it matches or 20 when it diverges (1 stays a tool error). --update-baseline\n' +
+  '(needs --baseline) instead writes the current render as the new baseline(s).';
 
 /**
  * Read the package version at runtime.
@@ -99,6 +110,14 @@ interface RenderArgs {
   maxNodes?: number;
   /** `--watch`: re-render on file change; requires a FILE input (F3.4). */
   watch?: boolean;
+  /** Baseline PNG from `--baseline <png>` — image-diff the render against it (F4.1). */
+  baseline?: string;
+  /** Baseline tree JSON from `--baseline-tree <json>` — tree-diff against it (F4.2). */
+  baselineTree?: string;
+  /** `--update-baseline`: write the current render as the new baseline(s) (F4.4). */
+  updateBaseline?: boolean;
+  /** Image-diff fail ratio from `--threshold <ratio>` (default 0.01) (F4.1/F4.3). */
+  threshold?: number;
 }
 
 /**
@@ -111,6 +130,22 @@ function parseCountFlag(flag: string, value: string | undefined): number {
     throw new Error(`${flag} requires a non-negative integer argument.`);
   }
   return parseInt(value, 10);
+}
+
+/**
+ * Parse + validate a `--threshold` ratio: a finite number in [0,1]. Throws a clear
+ * Error when missing or out of range so the caller surfaces a usage diagnostic on
+ * stderr. Accepts forms like `0`, `0.01`, `.5`, `1`.
+ */
+function parseRatioFlag(flag: string, value: string | undefined): number {
+  if (value === undefined || !/^\d*\.?\d+$/.test(value)) {
+    throw new Error(`${flag} requires a number between 0 and 1.`);
+  }
+  const n = parseFloat(value);
+  if (!Number.isFinite(n) || n < 0 || n > 1) {
+    throw new Error(`${flag} requires a number between 0 and 1.`);
+  }
+  return n;
 }
 
 /**
@@ -139,6 +174,10 @@ function parseRenderArgs(argv: string[]): RenderArgs {
   let maxDepth: number | undefined;
   let maxNodes: number | undefined;
   let watch = false;
+  let baseline: string | undefined;
+  let baselineTree: string | undefined;
+  let updateBaseline = false;
+  let threshold: number | undefined;
 
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
@@ -219,6 +258,34 @@ function parseRenderArgs(argv: string[]): RenderArgs {
       i++; // consume the value
     } else if (arg === '--watch') {
       watch = true;
+    } else if (arg === '--baseline') {
+      const value = argv[i + 1];
+      if (value === undefined || value.startsWith('-')) {
+        throw new Error('--baseline requires a path argument.');
+      }
+      if (baseline !== undefined) {
+        throw new Error('--baseline was specified more than once.');
+      }
+      baseline = value;
+      i++; // consume the value
+    } else if (arg === '--baseline-tree') {
+      const value = argv[i + 1];
+      if (value === undefined || value.startsWith('-')) {
+        throw new Error('--baseline-tree requires a path argument.');
+      }
+      if (baselineTree !== undefined) {
+        throw new Error('--baseline-tree was specified more than once.');
+      }
+      baselineTree = value;
+      i++; // consume the value
+    } else if (arg === '--update-baseline') {
+      updateBaseline = true;
+    } else if (arg === '--threshold') {
+      if (threshold !== undefined) {
+        throw new Error('--threshold was specified more than once.');
+      }
+      threshold = parseRatioFlag('--threshold', argv[i + 1]);
+      i++; // consume the value
     } else if (arg === '--code') {
       const value = argv[i + 1];
       // `--code` value may legitimately start with '-' (it's arbitrary C++), so
@@ -260,7 +327,33 @@ function parseRenderArgs(argv: string[]): RenderArgs {
   if (watch && (code !== undefined || input === '-')) {
     throw new Error('--watch requires a FILE input (not stdin or --code).');
   }
-  return { input, code, imageOut, overlayOut, at, nodeId, format, reportOut, maxDepth, maxNodes, watch };
+  // --update-baseline writes the current render as the baseline, so it needs a
+  // destination PNG (and optionally a tree-JSON destination).
+  if (updateBaseline && baseline === undefined) {
+    throw new Error('--update-baseline requires --baseline <png> (the destination).');
+  }
+  // Verify mode replaces the normal tree stdout with a single verdict JSON, so it
+  // cannot share stdout with a query/format flag, and it is a one-shot (no --watch).
+  const verifying = baseline !== undefined || baselineTree !== undefined;
+  if (verifying) {
+    if (at !== undefined || nodeId !== undefined) {
+      throw new Error('--baseline/--baseline-tree cannot be combined with --at/--node.');
+    }
+    if (format !== undefined || reportOut !== undefined) {
+      throw new Error('--baseline/--baseline-tree cannot be combined with --format/--report.');
+    }
+    if (watch) {
+      throw new Error('--baseline/--baseline-tree cannot be combined with --watch.');
+    }
+  }
+  // --threshold only affects the image diff; it is meaningless without a baseline.
+  if (threshold !== undefined && baseline === undefined) {
+    throw new Error('--threshold requires --baseline <png>.');
+  }
+  return {
+    input, code, imageOut, overlayOut, at, nodeId, format, reportOut, maxDepth, maxNodes, watch,
+    baseline, baselineTree, updateBaseline, threshold,
+  };
 }
 
 /**
@@ -381,6 +474,96 @@ async function renderAndEmit(parsed: RenderArgs, resolved: ResolvedInput): Promi
 }
 
 /**
+ * Load a target scene tree from a `--baseline-tree` JSON file and project it
+ * through {@link buildTree} so it is the SAME canonical shape as the freshly
+ * rendered tree (ids/types/bounds aligned), making the id-keyed {@link treeDiff}
+ * apples-to-apples. The file may be a `{ root: <node> }` wrapper or a bare node —
+ * buildTree accepts both. No `sourceCode` is passed (the baseline carries its own
+ * `sourceLine`s already).
+ *
+ * @throws  If the file is missing/unreadable or not valid tree JSON.
+ */
+async function loadBaselineTree(baselineTreePath: string): Promise<MinimalNode> {
+  let raw: string;
+  try {
+    raw = await fs.promises.readFile(baselineTreePath, 'utf8');
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err);
+    throw new Error(`could not read --baseline-tree '${baselineTreePath}': ${reason}`);
+  }
+  return buildTree(raw);
+}
+
+/**
+ * The verify / update-baseline pass (M4): render ONCE, then EITHER
+ *   - `--update-baseline`: write the just-rendered PNG to the `--baseline` path
+ *     (and the current tree JSON to `--baseline-tree`, if given) and return 0 — no
+ *     diff is computed; or
+ *   - verify (`--baseline` and/or `--baseline-tree`, without --update-baseline):
+ *     image-diff and/or tree-diff the render against the baseline(s), print the
+ *     combined verdict JSON to stdout (REPLACING the normal tree stdout, Inv-6),
+ *     and return 0 (match) or 20 (diverged).
+ *
+ * Owns its own temp workDir, cleaned up in a `finally` (mirrors {@link renderAndEmit}).
+ * `--image` is still honoured as an orthogonal side-effect (copy the actual PNG out).
+ * Throws on render/IO failure so the caller decides fatal-vs-recoverable.
+ */
+async function runVerifyOrUpdate(parsed: RenderArgs, resolved: ResolvedInput): Promise<number> {
+  let workDir: string | undefined;
+  try {
+    const source = templateHarness(resolved.code);
+    const result = await renderInContainer(source);
+    workDir = result.workDir;
+
+    const tree = buildTree(result.metadataJson, {
+      sourceCode: resolved.code,
+      startLine: resolved.startLine,
+    });
+
+    // --image is an orthogonal side-effect: copy the actual render out if asked.
+    if (parsed.imageOut !== undefined) {
+      const destDir = path.dirname(path.resolve(parsed.imageOut));
+      await fs.promises.mkdir(destDir, { recursive: true });
+      await fs.promises.copyFile(result.pngPath, parsed.imageOut);
+    }
+
+    // --update-baseline: write the current render AS the baseline(s); no diff.
+    if (parsed.updateBaseline) {
+      // parseRenderArgs guarantees baseline is set when updateBaseline is.
+      const baselinePng = parsed.baseline as string;
+      const pngDir = path.dirname(path.resolve(baselinePng));
+      await fs.promises.mkdir(pngDir, { recursive: true });
+      await fs.promises.copyFile(result.pngPath, baselinePng);
+      if (parsed.baselineTree !== undefined) {
+        const treeDir = path.dirname(path.resolve(parsed.baselineTree));
+        await fs.promises.mkdir(treeDir, { recursive: true });
+        await fs.promises.writeFile(parsed.baselineTree, `${JSON.stringify(tree)}\n`, 'utf8');
+      }
+      return 0;
+    }
+
+    // Verify: compute whichever diffs were requested, then the combined verdict.
+    let image: ImageDiffResult | undefined;
+    if (parsed.baseline !== undefined) {
+      image = await imageDiff(result.pngPath, parsed.baseline, { failRatio: parsed.threshold });
+    }
+    let treeResult: TreeDiffResult | undefined;
+    if (parsed.baselineTree !== undefined) {
+      const target = await loadBaselineTree(parsed.baselineTree);
+      treeResult = treeDiff(tree, target);
+    }
+
+    const verdict = buildVerdict({ image, tree: treeResult });
+    process.stdout.write(`${JSON.stringify(verdict)}\n`);
+    return verdictExitCode(verdict);
+  } finally {
+    if (workDir !== undefined) {
+      cleanupWorkDir(workDir);
+    }
+  }
+}
+
+/**
  * Render command: resolve input (file | stdin | inline) → template → render in
  * container → build the annotated tree → select stdout per the query/format flags
  * → write the file side-effects for `--image` / `--overlay` / `--report`.
@@ -412,6 +595,20 @@ async function runRender(argv: string[]): Promise<number> {
   if (resolved.code.trim().length === 0) {
     console.error('dali-ui-preview: input is empty — no preview code to render.');
     return 1;
+  }
+
+  // Verify / update-baseline (M4): a one-shot render whose stdout is the verdict
+  // JSON (or nothing, for --update-baseline), and whose exit code is 0 = match /
+  // 20 = diverged. A render/IO failure here is a TOOL error (exit 1), kept distinct
+  // from the 20 "rendered, but differs" verdict. Parsed-arg validation already
+  // rejected combining these flags with --watch / --at / --node / --format / --report.
+  if (parsed.updateBaseline || parsed.baseline !== undefined || parsed.baselineTree !== undefined) {
+    try {
+      return await runVerifyOrUpdate(parsed, resolved);
+    } catch (err) {
+      console.error(`dali-ui-preview: ${err instanceof Error ? err.message : String(err)}`);
+      return 1;
+    }
   }
 
   // --watch: an initial render+emit, then re-render on every change to the input
