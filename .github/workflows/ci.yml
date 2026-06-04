@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build-test:
+    name: build + test + CLI smoke
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Test
+        run: npm test
+
+      # Smoke-test the CLI surface without rendering. --version / --help are pure
+      # stdout (no Docker, no container), so they run on any GitHub-hosted runner.
+      - name: Smoke --version
+        run: node out/cli.js --version
+
+      - name: Smoke --help
+        run: node out/cli.js --help
+
+# NOTE: the docker-render path (`docker run ghcr.io/lwc0917/dali-preview-runtime ...`)
+# is NOT exercised here. GitHub-hosted runners do not have the DALi runtime image, so
+# an actual code->PNG+tree render cannot run on them. To cover that path, add a job
+# that runs on a self-hosted runner with Docker + the runtime image pulled, e.g.:
+#
+#   render-smoke:
+#     runs-on: [self-hosted, docker]
+#     steps:
+#       - uses: actions/checkout@v4
+#       - run: npm ci && npm run build
+#       - run: node out/cli.js samples/hello-dali.preview.dali.cpp --image /tmp/out.png

@@ -1,1 +1,1 @@
-{ "milestone":"M6","completed":[] }
+{ "milestone":"M6","completed":["WU-1","WU-2","WU-3","WU-4","WU-5"],"milestone_done":true,"validated":"npm pack ok; final smoke pass" }

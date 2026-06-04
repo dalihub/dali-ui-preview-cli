@@ -9,9 +9,35 @@
   "os": [
     "linux"
   ],
+  "files": [
+    "out/",
+    "server/",
+    "samples/",
+    "README.md",
+    "CHANGELOG.md"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "license": "Apache-2.0",
+  "keywords": [
+    "dali",
+    "tizen",
+    "ui",
+    "preview",
+    "cli",
+    "ai-agent",
+    "screenshot",
+    "render"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/lwc0917/dali-ui-preview"
+  },
   "scripts": {
     "build": "tsc -p ./",
     "watch": "tsc -watch -p ./",
+    "prepublishOnly": "npm run build",
     "pretest": "npm run build",
     "test": "npm run test:unit",
     "test:unit": "c8 mocha out/test/unit/**/*.test.js --timeout 10000"
