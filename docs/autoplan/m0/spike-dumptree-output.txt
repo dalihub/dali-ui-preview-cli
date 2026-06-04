@@ -1,0 +1,50 @@
+# M0/F0.5 — A11y DumpTree headless spike — captured evidence
+
+Probe: injected `#include <dali/devel-api/atspi-interfaces/accessible.h>` plus an
+`Accessibility::Accessible::Get(window.GetRootLayer())->DumpTree(DUMP_FULL)` call
+into the preview harness, then compiled + ran it HEADLESS (Xvfb, NO live D-Bus
+session) inside ghcr.io/lwc0917/dali-preview-runtime:latest. docker exit = 0.
+
+================================================================================
+## VERDICT: DumpTree WORKS headless WITHOUT a D-Bus session.  (answer: YES)
+================================================================================
+`Accessible::Get` returned non-null and `DumpTree(DUMP_FULL)` produced 1156 chars
+of valid per-node JSON (role, states, text, type, x/y/w/h, children) — even though
+the AT-SPI *bridge* to an external screen reader is DOWN (no D-Bus). DALi builds
+its internal accessible tree in-process; D-Bus is only needed to EXPOSE that tree
+to an external AT-SPI client, NOT to read it via DumpTree.
+
+Caveat: roles are mostly "unknown"/"redundant object" because the dali-ui DSL
+controls do not set an explicit accessibility role by default. Structure, bounds
+(x,y,w,h), text(name), states (bitset) and concrete type ARE present and reliable.
+
+================================================================================
+## Evidence A — the D-Bus / AT-SPI bridge is genuinely DOWN headless (ANSI-stripped)
+================================================================================
+INFO: DALI: window-impl.cpp: OnAccessibilityDisabled(1266) > Window (...), Accessibility is disabled
+ERROR: DALI: dbus-wrapper-eldbus.h: dbus_connection_get_impl(378) > cannot get dbus connection
+ERROR: DALI: dbus-tizen.cpp: DBusClient(123) > DBusClient connection is not ready
+ERROR: DALI: bridge-impl.cpp: InitializeAccessibilityStatusClient(880) > Accessibility Status DbusClient is not ready
+(stderr) ERR<28>:eldbus eldbus_core.c:1062 _connection_get() Error connecting to bus of type 2. error name: org.freedesktop.DBus.Error.FileNotFound error message: Failed to connect to socket /run/dbus/system_bus_socket: No such file or directory
+
+================================================================================
+## Evidence B — yet DumpTree still returns a full semantic tree (probe markers)
+================================================================================
+SPIKE_BEGIN
+SPIKE_GET: non-null
+INFO: DALI: accessible.cpp: DumpTree(497) > DumpTree(root) detail_level=2 out_chars=1156
+SPIKE_DUMPTREE_LEN: 1156
+SPIKE_DUMP_START
+{ "appname": "", "path": "/org/a11y/atspi/accessible/1", "role": "window", "states": 1124073730, "text": "RootLayer", "type" : "Layer", "x": 0, "y": 0, "w": 1024, "h": 600, "toolkit": "dali", "attributes": { "reading_info_type": "none", "resID": "" }, "children": [ { "appname": "", "path": "/org/a11y/atspi/accessible/2", "role": "redundant object", "states": 1107296256, "text": "DefaultCamera", "type" : "CameraActor", "x": 512, "y": 300, "w": 0, "h": 0 }, { "appname": "", "path": "/org/a11y/atspi/accessible/3", "role": "unknown", "states": 1107296512, "type" : "FlexLayoutImpl", "x": 0, "y": 0, "w": 1024, "h": 600, "children": [ { "appname": "", "path": "/org/a11y/atspi/accessible/4", "role": "unknown", "states": 1107296512, "type" : "LabelImpl", "x": 381, "y": 262, "w": 262, "h": 56 }, { "appname": "", "path": "/org/a11y/atspi/accessible/5", "role": "unknown", "states": 1107296512, "type" : "LabelImpl", "x": 339, "y": 318, "w": 346, "h": 20 }] }, { "appname": "", "path": "/org/a11y/atspi/accessible/6", "role": "redundant object", "states": 1107296256, "text": "DefaultCamera", "type" : "CameraActor", "x": 512, "y": 300, "w": 0, "h": 0 }] }
+SPIKE_DUMP_END
+SPIKE_END
+
+================================================================================
+## Implication for M1 tree-source (see ADR-008)
+================================================================================
+DumpTree is a usable headless semantic+geometric source. M1 can consume it for
+role/states/text/bounds, supplement it with the property-walk (CollectActorMetadata)
+for fields DumpTree omits (user colors, flexProps), and map control type → role to
+fix the "unknown" roles. The property-reconstructed walk remains the guaranteed
+floor (ADR-003 / Inv-2), so nothing regresses if a future image lacks the bridge
+headers.

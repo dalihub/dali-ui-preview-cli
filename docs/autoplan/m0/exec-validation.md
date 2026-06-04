@@ -38,3 +38,10 @@
 - No regression: PNG still produced (F0.3 green)
 - ✋: none
 - **Verdict: PASS (Tier 2)**
+
+## WU-6 — A11y-bridge spike + ADR-008  [F0.5, Tier 3 + ✋]
+- **Gate B (F0.5, verbatim)**: all 7 checks PASS (artifact + ADR exist/non-empty; evidence keywords; definite verdict; tree-source named; no placeholders)
+- **SURPRISE (flips ADR-003's pessimistic assumption)**: `DumpTree` WORKS headless without D-Bus — `Accessible::Get` non-null, `DumpTree(DUMP_FULL)` → 1156 chars of per-node JSON (role/states/text/type/x/y/w/h/children). The "Accessibility disabled"/D-Bus errors are about the EXTERNAL AT-SPI bridge; DALi's internal accessible tree is readable locally.
+- **Decision (ADR-008)**: M1 uses DumpTree as a semantic+geometric source + property-walk for colors/flex + control-type→role map (default roles are "unknown"); property-walk stays the Inv-2 floor.
+- ✋: human confirms ADR verdict vs artifact (queued in visual-holds.md).
+- **Verdict: PASS (Tier 3 + ✋)**
