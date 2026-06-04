@@ -58,9 +58,24 @@
   and a CI workflow (build + test + CLI smoke; the Docker render path runs on a self-hosted
   runner only).
 
+### Rename + runtime version management
+
+- Renamed the package and its single command to `dali-ui-preview-cli` (the `bin`,
+  `repository`, and every `--help`/diagnostic string now use it).
+- Runtime image versions track DALi releases as `dali_<DALiVersion>` tags (e.g. `dali_2.5.18`),
+  plus the rolling `latest`.
+- `--list-versions` prints the available runtime versions (remote registry ∪ local docker,
+  each marked `local`/`current`) as JSON; tolerates docker being down (lists remote with
+  `local: false`).
+- `--pull [<tag>]` downloads a runtime image tag (default `latest`), streaming docker's
+  progress to stderr and printing `{"pulled":"<ref>","ok":true}` to stdout.
+- `--image-tag <tag>` selects the runtime tag for a render (default `latest`); `--runtime-image
+  <name>` overrides the runtime image name (advanced). Both also apply to `--list-versions`
+  and `--pull`.
+
 ## 0.1.0 — M0 (build infra + first end-to-end render)
 
-- `dali-ui-preview <input> --image <out.png>` — resolves DALi preview C++ from a
+- `dali-ui-preview-cli <input> --image <out.png>` — resolves DALi preview C++ from a
   `*.preview.dali.cpp` file (or `@dali-preview-begin/end` markers), renders it
   headlessly in the runtime Docker image, writes the PNG, and prints a minimal
   scene-tree JSON (per-node type + nesting) to stdout. `--version` / `--help`.

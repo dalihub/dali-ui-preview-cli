@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 /*
- * dali-ui-preview CLI entrypoint.
+ * dali-ui-preview-cli CLI entrypoint.
  *
- * Default command (M1): `dali-ui-preview <input> [--image <out.png>]` resolves
+ * Default command (M1): `dali-ui-preview-cli <input> [--image <out.png>]` resolves
  * the preview code from <input> — a FILE path, a code block on STDIN (when
  * <input> is `-` or stdin is piped), or an inline `--code "<text>"` block —
  * templates the DALi harness, renders it inside the runtime container, ALWAYS
@@ -20,7 +20,15 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { resolveInput, resolveFromCode, resolveFromStdin, ResolvedInput } from './inputResolver';
 import { templateHarness, userCodeOffset, THEME_BACKGROUND } from './harnessTemplater';
-import { renderInContainer, cleanupWorkDir, RenderError } from './dockerRunner';
+import {
+  renderInContainer,
+  cleanupWorkDir,
+  RenderError,
+  isDockerAvailable,
+  DEFAULT_DOCKER_IMAGE,
+  DEFAULT_IMAGE_TAG,
+} from './dockerRunner';
+import { listVersions, pullImage } from './imageManager';
 import { buildTree, MinimalNode } from './treeModel';
 import { parseGccErrors, formatRawError } from './errorParser';
 import { nodeAt, nodeById, toRegion } from './treeQuery';
@@ -78,23 +86,27 @@ export interface StructuredError {
 }
 
 const USAGE =
-  'Usage: dali-ui-preview <input.cpp | -> [--image <out.png>]\n' +
-  '       dali-ui-preview --code "<dali ui code>" [--image <out.png>]\n' +
-  '       cat input.cpp | dali-ui-preview [--image <out.png>]\n' +
-  '       dali-ui-preview <input.cpp> --format tree         (print a box-drawing tree instead of JSON)\n' +
-  '       dali-ui-preview <input.cpp> --report <out.html|.md> (write a self-contained report)\n' +
-  '       dali-ui-preview <input.cpp> --max-depth N | --max-nodes N (bound the stdout JSON)\n' +
-  '       dali-ui-preview <input.cpp> --overlay <out.png>   (write a Set-of-Mark annotated PNG)\n' +
-  '       dali-ui-preview <input.cpp> --at X,Y              (print the topmost node at a pixel)\n' +
-  '       dali-ui-preview <input.cpp> --node <id>           (print that node id\'s region)\n' +
-  '       dali-ui-preview <input.cpp> --watch               (re-render on file change; FILE input only)\n' +
-  '       dali-ui-preview <input.cpp> --baseline <png> [--baseline-tree <json>] [--threshold <ratio>]\n' +
-  '                                                          (verify the render; print a verdict, exit 0 match / 20 diverged)\n' +
-  '       dali-ui-preview <input.cpp> --update-baseline --baseline <png> [--baseline-tree <json>]\n' +
-  '                                                          (write the current render as the new baseline; exit 0)\n' +
-  '       dali-ui-preview <input.cpp> --resolution WxH       (render size, default 1024x600)\n' +
-  '       dali-ui-preview <input.cpp> --theme dark|light     (background theme, default dark)\n' +
-  '       dali-ui-preview <input.cpp> --dpr N                (device-pixel ratio, default 1)\n' +
+  'Usage: dali-ui-preview-cli <input.cpp | -> [--image <out.png>]\n' +
+  '       dali-ui-preview-cli --code "<dali ui code>" [--image <out.png>]\n' +
+  '       cat input.cpp | dali-ui-preview-cli [--image <out.png>]\n' +
+  '       dali-ui-preview-cli <input.cpp> --format tree         (print a box-drawing tree instead of JSON)\n' +
+  '       dali-ui-preview-cli <input.cpp> --report <out.html|.md> (write a self-contained report)\n' +
+  '       dali-ui-preview-cli <input.cpp> --max-depth N | --max-nodes N (bound the stdout JSON)\n' +
+  '       dali-ui-preview-cli <input.cpp> --overlay <out.png>   (write a Set-of-Mark annotated PNG)\n' +
+  '       dali-ui-preview-cli <input.cpp> --at X,Y              (print the topmost node at a pixel)\n' +
+  '       dali-ui-preview-cli <input.cpp> --node <id>           (print that node id\'s region)\n' +
+  '       dali-ui-preview-cli <input.cpp> --watch               (re-render on file change; FILE input only)\n' +
+  '       dali-ui-preview-cli <input.cpp> --baseline <png> [--baseline-tree <json>] [--threshold <ratio>]\n' +
+  '                                                              (verify the render; print a verdict, exit 0 match / 20 diverged)\n' +
+  '       dali-ui-preview-cli <input.cpp> --update-baseline --baseline <png> [--baseline-tree <json>]\n' +
+  '                                                              (write the current render as the new baseline; exit 0)\n' +
+  '       dali-ui-preview-cli <input.cpp> --resolution WxH       (render size, default 1024x600)\n' +
+  '       dali-ui-preview-cli <input.cpp> --theme dark|light     (background theme, default dark)\n' +
+  '       dali-ui-preview-cli <input.cpp> --dpr N                (device-pixel ratio, default 1)\n' +
+  '       dali-ui-preview-cli <input.cpp> --image-tag <tag>      (runtime image tag for THIS render, default latest)\n' +
+  '       dali-ui-preview-cli <input.cpp> --image <name>         (override the runtime image name; advanced)\n' +
+  '       dali-ui-preview-cli --list-versions                    (list runtime image versions as JSON; exit 0)\n' +
+  '       dali-ui-preview-cli --pull [<tag>]                     (pull a runtime image tag, default latest)\n' +
   '   (or --version | --help)\n' +
   '\n' +
   'Reads preview code from a file, from STDIN (a `-` positional or a piped\n' +
@@ -115,6 +127,12 @@ const USAGE =
   'picks the background color (default dark); --dpr N (default 1) multiplies the render\n' +
   'dimensions by N device pixels. The effective {resolution,theme,dpr} are echoed on the\n' +
   'stdout tree as root.meta.\n' +
+  '\n' +
+  'Runtime versions track DALi releases (e.g. dali_2.5.18), plus the rolling `latest`.\n' +
+  '--list-versions prints the available runtime image versions (remote ∪ local, each\n' +
+  'marked local/current) as JSON; --pull [<tag>] downloads a tag (default latest);\n' +
+  '--image-tag <tag> selects the tag for THIS render (default latest); --image <name>\n' +
+  'overrides the runtime image name. --list-versions / --pull do NOT render.\n' +
   '\n' +
   'Exit codes: 0 ok; 1 usage error or empty input; 10 compile error (in your code);\n' +
   '11 render/capture error; 12 docker unavailable; 20 verify diff mismatch.\n' +
@@ -180,6 +198,14 @@ export interface RenderArgs {
   theme?: Theme;
   /** Device-pixel ratio from `--dpr N` (default 1); scales render dims (F5.1). */
   dpr?: number;
+  /** Runtime image tag from `--image-tag <tag>` (default 'latest'); selects the runtime version. */
+  imageTag?: string;
+  /** Runtime image name from `--image <name>` (default DEFAULT_DOCKER_IMAGE); advanced override. */
+  image?: string;
+  /** `--list-versions`: list runtime image versions (remote ∪ local) as JSON; does NOT render. */
+  listVersions?: boolean;
+  /** `--pull [<tag>]`: pull a runtime image tag; does NOT render. `''` means the default tag. */
+  pull?: { tag?: string };
 }
 
 /**
@@ -255,7 +281,7 @@ function parseDprFlag(value: string | undefined): number {
  *
  * Note: `--image`/`--overlay` are intentionally NOT required here. Whether an input
  * source was supplied at all is decided in {@link runRender} (which also considers
- * piped stdin), so a bare `dali-ui-preview` with a pipe is valid.
+ * piped stdin), so a bare `dali-ui-preview-cli` with a pipe is valid.
  */
 function parseRenderArgs(argv: string[]): RenderArgs {
   let input: string | undefined;
@@ -276,6 +302,10 @@ function parseRenderArgs(argv: string[]): RenderArgs {
   let resolution: { w: number; h: number } | undefined;
   let theme: Theme | undefined;
   let dpr: number | undefined;
+  let imageTag: string | undefined;
+  let image: string | undefined;
+  let listVersions = false;
+  let pull: { tag?: string } | undefined;
 
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
@@ -406,6 +436,42 @@ function parseRenderArgs(argv: string[]): RenderArgs {
       }
       dpr = parseDprFlag(argv[i + 1]);
       i++; // consume the value
+    } else if (arg === '--image-tag') {
+      const value = argv[i + 1];
+      if (value === undefined || value.startsWith('-')) {
+        throw new Error('--image-tag requires a tag argument (e.g. latest, dali_2.5.18).');
+      }
+      if (imageTag !== undefined) {
+        throw new Error('--image-tag was specified more than once.');
+      }
+      imageTag = value;
+      i++; // consume the value
+    } else if (arg === '--runtime-image') {
+      const value = argv[i + 1];
+      if (value === undefined || value.startsWith('-')) {
+        throw new Error('--runtime-image requires an image-name argument.');
+      }
+      if (image !== undefined) {
+        throw new Error('--runtime-image was specified more than once.');
+      }
+      image = value;
+      i++; // consume the value
+    } else if (arg === '--list-versions') {
+      listVersions = true;
+    } else if (arg === '--pull') {
+      if (pull !== undefined) {
+        throw new Error('--pull was specified more than once.');
+      }
+      // The tag is OPTIONAL: consume the next token only when it is a bare value
+      // (not another flag and not absent). `--pull` alone defaults to 'latest'
+      // (resolved at the dispatch site).
+      const value = argv[i + 1];
+      if (value !== undefined && !value.startsWith('-')) {
+        pull = { tag: value };
+        i++; // consume the optional tag
+      } else {
+        pull = {};
+      }
     } else if (arg === '--code') {
       const value = argv[i + 1];
       // `--code` value may legitimately start with '-' (it's arbitrary C++), so
@@ -470,9 +536,31 @@ function parseRenderArgs(argv: string[]): RenderArgs {
   if (threshold !== undefined && baseline === undefined) {
     throw new Error('--threshold requires --baseline <png>.');
   }
+  // Management commands (--list-versions / --pull) operate on the runtime image,
+  // not on a render: they are mutually exclusive with each other and with every
+  // render/verify-only flag. (--runtime-image / --image-tag DO apply to them, so
+  // those are deliberately not rejected here.)
+  if (listVersions && pull !== undefined) {
+    throw new Error('pass at most one management command: --list-versions or --pull, not both.');
+  }
+  const managing = listVersions || pull !== undefined;
+  if (managing) {
+    if (input !== undefined || code !== undefined) {
+      throw new Error('--list-versions / --pull do not take an input; remove it.');
+    }
+    if (
+      imageOut !== undefined || overlayOut !== undefined || at !== undefined || nodeId !== undefined ||
+      format !== undefined || reportOut !== undefined || maxDepth !== undefined || maxNodes !== undefined ||
+      watch || baseline !== undefined || baselineTree !== undefined || updateBaseline ||
+      threshold !== undefined || resolution !== undefined || theme !== undefined || dpr !== undefined
+    ) {
+      throw new Error('--list-versions / --pull cannot be combined with render or verify flags.');
+    }
+  }
   return {
     input, code, imageOut, overlayOut, at, nodeId, format, reportOut, maxDepth, maxNodes, watch,
     baseline, baselineTree, updateBaseline, threshold, resolution, theme, dpr,
+    imageTag, image, listVersions, pull,
   };
 }
 
@@ -543,20 +631,44 @@ export function resolveRenderConfig(parsed: RenderArgs): RenderConfig {
   };
 }
 
+/** The resolved runtime image coordinates a render/verify/management command uses. */
+interface ImageRef {
+  /** Base image name without tag (default {@link DEFAULT_DOCKER_IMAGE}). */
+  image: string;
+  /** Image tag (default {@link DEFAULT_IMAGE_TAG}). */
+  tag: string;
+}
+
+/**
+ * Resolve the runtime image name + tag ONCE from the parsed args, applying the
+ * defaults. Threaded into every command (render, verify, list-versions, pull) so
+ * they all target the same `<image>:<tag>`. `--runtime-image` overrides the name;
+ * `--image-tag` overrides the tag (default `latest`).
+ */
+function resolveImageRef(parsed: RenderArgs): ImageRef {
+  return {
+    image: parsed.image ?? DEFAULT_DOCKER_IMAGE,
+    tag: parsed.imageTag ?? DEFAULT_IMAGE_TAG,
+  };
+}
+
 /**
  * Render the templated harness for `resolved` at `config`'s device dimensions and
  * theme, returning the raw render result. Centralizes the WU-1 wiring so every
  * render site (one-shot, watch, verify) passes the SAME width/height to BOTH
  * `templateHarness` (the `PREVIEW_WIDTH/HEIGHT` float literals + background) AND
- * `renderInContainer` (the `PREVIEW_WIDTH/HEIGHT` env → Xvfb screen size).
+ * `renderInContainer` (the `PREVIEW_WIDTH/HEIGHT` env → Xvfb screen size). The
+ * resolved `imageRef` selects which runtime image+tag the container runs.
  */
-async function renderWithConfig(resolved: ResolvedInput, config: RenderConfig) {
+async function renderWithConfig(resolved: ResolvedInput, config: RenderConfig, imageRef: ImageRef) {
   const source = templateHarness(resolved.code, {
     width: config.deviceWidth,
     height: config.deviceHeight,
     backgroundColor: config.backgroundColor,
   });
   return renderInContainer(source, {
+    image: imageRef.image,
+    tag: imageRef.tag,
     width: config.deviceWidth,
     height: config.deviceHeight,
   });
@@ -623,7 +735,7 @@ async function renderAndEmit(parsed: RenderArgs, resolved: ResolvedInput): Promi
   let workDir: string | undefined;
   try {
     const config = resolveRenderConfig(parsed);
-    const result = await renderWithConfig(resolved, config);
+    const result = await renderWithConfig(resolved, config, resolveImageRef(parsed));
     workDir = result.workDir;
 
     // Build the annotated canonical tree (now carrying the M2 `mark`). This is the
@@ -708,7 +820,7 @@ async function runVerifyOrUpdate(parsed: RenderArgs, resolved: ResolvedInput): P
   let workDir: string | undefined;
   try {
     const config = resolveRenderConfig(parsed);
-    const result = await renderWithConfig(resolved, config);
+    const result = await renderWithConfig(resolved, config, resolveImageRef(parsed));
     workDir = result.workDir;
 
     const tree = attachMeta(
@@ -777,6 +889,59 @@ async function runVerifyOrUpdate(parsed: RenderArgs, resolved: ResolvedInput): P
 }
 
 /**
+ * `--list-versions` (management, no render): merge the remote registry tags with
+ * the local docker tags for the resolved `<image>`, marking each tag's
+ * local/current status, and print the {@link VersionListing} JSON to STDOUT, exit
+ * 0. The LOCAL part tolerates docker being down (imageManager logs a stderr note
+ * and reports `local: false`), so this stays exit 0 offline-from-docker. A REGISTRY
+ * failure is the only fatal case here (nothing useful to print) → exit 1 + stderr.
+ */
+async function runListVersions(parsed: RenderArgs): Promise<number> {
+  const { image, tag } = resolveImageRef(parsed);
+  try {
+    const listing = await listVersions(image, tag);
+    process.stdout.write(`${JSON.stringify(listing)}\n`);
+    return EXIT.OK;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error(`dali-ui-preview-cli: could not list runtime versions: ${message}`);
+    return EXIT.USAGE;
+  }
+}
+
+/**
+ * `--pull [<tag>]` (management, no render): pull the resolved `<image>:<tag>`
+ * (default tag `latest`), streaming docker's progress to STDERR, then print
+ * `{"pulled":"<ref>","ok":true}` to STDOUT, exit 0. Docker being unavailable is a
+ * distinct documented failure (exit 12); any other pull failure (bad tag, network)
+ * is exit 11 with the error on stderr (stdout stays empty for the caller's parser).
+ */
+async function runPull(parsed: RenderArgs): Promise<number> {
+  const { image, tag: defaultTag } = resolveImageRef(parsed);
+  // `--pull` alone (or `--pull` with no tag token) defaults to 'latest'; an
+  // explicit `--image-tag` is NOT used to pick the pulled tag (the positional
+  // `--pull <tag>` is the selector), but `--pull` with no tag falls back to the
+  // resolved default tag so `--pull` and a bare render agree on 'latest'.
+  const tag = parsed.pull?.tag ?? defaultTag;
+  if (!(await isDockerAvailable())) {
+    console.error(
+      'dali-ui-preview-cli: Docker is not available: `docker info` failed. Ensure Docker is ' +
+      'installed, the daemon is running, and the current user can access the Docker socket.',
+    );
+    return EXIT.DOCKER_UNAVAILABLE;
+  }
+  try {
+    const { ref } = await pullImage(image, tag);
+    process.stdout.write(`${JSON.stringify({ pulled: ref, ok: true })}\n`);
+    return EXIT.OK;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error(`dali-ui-preview-cli: ${message}`);
+    return EXIT.RENDER_ERROR;
+  }
+}
+
+/**
  * Map a {@link RenderError}'s raw container diagnostics to the user's absolute
  * source line via the vendored gcc parser (F5.3): read the RAW harness template
  * (where `{{USER_CODE}}` still exists) to get the 1-based offset, run
@@ -826,17 +991,20 @@ function handleRenderFailure(err: unknown, resolved: ResolvedInput): number {
   // a distinct, documented failure class (exit 12), kept separate from a usage (1)
   // or a compile/render (10/11) failure so a script can branch on it.
   if (/^Docker is not available:/.test(message)) {
-    console.error(`dali-ui-preview: ${message}`);
+    console.error(`dali-ui-preview-cli: ${message}`);
     return EXIT.DOCKER_UNAVAILABLE;
   }
-  console.error(`dali-ui-preview: ${message}`);
+  console.error(`dali-ui-preview-cli: ${message}`);
   return EXIT.USAGE;
 }
 
 /**
- * Render command: resolve input (file | stdin | inline) → template → render in
- * container → build the annotated tree → select stdout per the query/format flags
- * → write the file side-effects for `--image` / `--overlay` / `--report`.
+ * Default-command dispatch. First parses the args, then short-circuits to a
+ * management command when one is set (`--list-versions` / `--pull` — these take no
+ * render input). Otherwise it is the render command: resolve input (file | stdin |
+ * inline) → template → render in container → build the annotated tree → select
+ * stdout per the query/format flags → write the file side-effects for
+ * `--image` / `--overlay` / `--report`.
  *
  * With `--watch` (FILE input only) it renders+emits once, then re-renders+re-emits
  * on every change to that file until SIGINT/SIGTERM. STDOUT carries a SINGLE
@@ -845,9 +1013,27 @@ function handleRenderFailure(err: unknown, resolved: ResolvedInput): number {
  */
 async function runRender(argv: string[]): Promise<number> {
   let parsed: RenderArgs;
-  let resolved: ResolvedInput;
   try {
     parsed = parseRenderArgs(argv);
+  } catch (err) {
+    console.error(`dali-ui-preview-cli: ${err instanceof Error ? err.message : String(err)}`);
+    console.error(USAGE);
+    return EXIT.USAGE;
+  }
+
+  // Management commands (--list-versions / --pull) operate on the runtime image and
+  // take NO render input, so they are dispatched here — before any input resolution.
+  // parseRenderArgs guarantees they are mutually exclusive with each other and with
+  // every render/verify flag. Their stdout is JSON; exit 0 on success.
+  if (parsed.listVersions) {
+    return runListVersions(parsed);
+  }
+  if (parsed.pull !== undefined) {
+    return runPull(parsed);
+  }
+
+  let resolved: ResolvedInput;
+  try {
     // Resolve the input source up front: an "no input given" error here must
     // surface the usage banner, exactly like an arg-parse error.
     resolved = await resolveRenderInput(parsed);
@@ -857,13 +1043,13 @@ async function runRender(argv: string[]): Promise<number> {
       throw new Error('--watch requires a FILE input (not stdin or --code).');
     }
   } catch (err) {
-    console.error(`dali-ui-preview: ${err instanceof Error ? err.message : String(err)}`);
+    console.error(`dali-ui-preview-cli: ${err instanceof Error ? err.message : String(err)}`);
     console.error(USAGE);
     return EXIT.USAGE;
   }
 
   if (resolved.code.trim().length === 0) {
-    console.error('dali-ui-preview: input is empty — no preview code to render.');
+    console.error('dali-ui-preview-cli: input is empty — no preview code to render.');
     return EXIT.USAGE;
   }
 
@@ -891,7 +1077,7 @@ async function runRender(argv: string[]): Promise<number> {
       await runWatch(filePath, async () => {
         const fresh = await resolveInput(filePath);
         if (fresh.code.trim().length === 0) {
-          console.error('dali-ui-preview: input is empty — no preview code to render.');
+          console.error('dali-ui-preview-cli: input is empty — no preview code to render.');
           return;
         }
         await renderAndEmit(parsed, fresh);
@@ -923,7 +1109,7 @@ async function main(argv: string[]): Promise<number> {
   }
 
   // A bare invocation (no args) is only a usage request when stdin is an
-  // interactive TTY. If code is piped in (`cat x.cpp | dali-ui-preview`), fall
+  // interactive TTY. If code is piped in (`cat x.cpp | dali-ui-preview-cli`), fall
   // through to runRender, which reads the piped stdin code block.
   if (argv.length === 0 && process.stdin.isTTY) {
     process.stdout.write(`${USAGE}\n`);
@@ -943,7 +1129,7 @@ if (require.main === module) {
   main(process.argv.slice(2))
     .then((code) => process.exit(code))
     .catch((err) => {
-      console.error(`dali-ui-preview: ${err instanceof Error ? err.message : String(err)}`);
+      console.error(`dali-ui-preview-cli: ${err instanceof Error ? err.message : String(err)}`);
       process.exit(1);
     });
 }
