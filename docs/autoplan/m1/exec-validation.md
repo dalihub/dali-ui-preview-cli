@@ -23,3 +23,13 @@ END-TO-END (real CLI, all input modes; build green):
 - **F1.4 determinism**: two file runs byte-identical ✓
 - ✋: none
 - **Verdict: PASS** (F1.1 schema, F1.2 bounds, F1.3 ids, F1.4 determinism, F1.5 sourceLine all green; input file|stdin|inline + optional image)
+
+## WU-4 — Unit-test suite (mocha+c8) [carry-over; Gate A]
+- `npm test` (pretest=`npm run build` → mocha): **39 passing**, 0 failing, exit 0.
+  - treeModel: input validation (4), semanticsSource normalize "accessible"→"bridge" (F1.1), root-type stamping, sourceLine merge incl. camera-skip + startLine offset + graceful-no-source (F1.5).
+  - inputResolver: preview-file/marker file modes, resolveFromCode inline+marker, resolveFromStdin (piped), error cases.
+  - harnessTemplater: no leftover placeholders + paths embedded. errorParser (bonus).
+- `npm test` is now a REAL Gate A (was vacuous — zero test files).
+- Note (M6 polish): c8 coverage prints 0% — needs a `.c8rc.json` include config; cosmetic, tests pass.
+- ✋: none
+- **Verdict: PASS**

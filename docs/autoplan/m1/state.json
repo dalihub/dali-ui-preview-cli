@@ -3,7 +3,8 @@
   "project_types": ["node-cli", "cpp-native"],
   "cycles_used": 1,
   "cycles_max": 3,
-  "wu_in_progress": "WU-4",
-  "completed": ["WU-1", "WU-2", "WU-3"],
+  "wu_in_progress": null,
+  "completed": ["WU-1", "WU-2", "WU-3", "WU-4"],
+  "wus_done": true,
   "started_at": "2026-06-04T15:17:47+09:00"
 }
