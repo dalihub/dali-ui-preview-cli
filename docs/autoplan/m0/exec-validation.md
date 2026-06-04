@@ -9,3 +9,10 @@
 - **Ratified deviation**: tsconfig `rootDir: "src"` (not `"."`) so tsc emits `out/cli.js` (the graded path), matching `bin`/`main`. The spec's `rootDir:"."` + `src/cli.ts` would emit `out/src/cli.js` and FAIL `test -f out/cli.js`. Forward note: future unit tests live under `src/test/unit/` → compile to `out/test/unit/` (satisfies the `test:unit` script). Applied in M1.
 - ✋: none
 - **Verdict: PASS (Tier 3)**
+
+## WU-2 — Vendor paperclip infra + canonical sample fixture  [F0.2, Tier 3]
+- **Gate A**: `npm run build` — vendored `cppParser`/`flexMetadata`/`errorParser` all compile under strict tsc (0 errors) → PASS
+- **Gate B (F0.2, verbatim)**: sample exists + non-empty, contains `Hello, Dali!` + `FlexLayout::New`, git-tracked (staged) → PASS
+- Vendored: `samples/hello-dali.preview.dali.cpp`, `server/preview_harness.cpp.template`, `src/cppParser.ts`, `src/flexMetadata.ts`, `src/errorParser.ts` (vscode-STRIPPED: dropped `import vscode` + `errorsToDiagnostics`; kept parse/offset/format + `ParsedError`). Provenance headers added (ADR-007).
+- ✋: none
+- **Verdict: PASS (Tier 3)**
