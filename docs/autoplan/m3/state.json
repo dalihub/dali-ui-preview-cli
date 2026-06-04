@@ -1,1 +1,1 @@
-{ "milestone":"M3","cycles_used":1,"cycles_max":3,"completed":[],"started_at":"2026-06-04T17:21:14+09:00" }
+{ "milestone":"M3","completed":["WU-1","WU-2","WU-3","WU-4","WU-5"],"milestone_done":true,"validated":"real-exec; npm test 82 passing" }

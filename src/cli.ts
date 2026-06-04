@@ -21,25 +21,37 @@ import * as path from 'path';
 import { resolveInput, resolveFromCode, resolveFromStdin, ResolvedInput } from './inputResolver';
 import { templateHarness } from './harnessTemplater';
 import { renderInContainer, cleanupWorkDir } from './dockerRunner';
-import { buildTree } from './treeModel';
+import { buildTree, MinimalNode } from './treeModel';
 import { nodeAt, nodeById, toRegion } from './treeQuery';
 import { renderOverlay } from './overlayRenderer';
+import { formatTree } from './formatters/treeFormatter';
+import { writeReport } from './formatters/reportFormatter';
+import { truncate } from './treeTruncate';
+import { runWatch } from './watch';
 
 const USAGE =
   'Usage: dali-ui-preview <input.cpp | -> [--image <out.png>]\n' +
   '       dali-ui-preview --code "<dali ui code>" [--image <out.png>]\n' +
   '       cat input.cpp | dali-ui-preview [--image <out.png>]\n' +
+  '       dali-ui-preview <input.cpp> --format tree         (print a box-drawing tree instead of JSON)\n' +
+  '       dali-ui-preview <input.cpp> --report <out.html|.md> (write a self-contained report)\n' +
+  '       dali-ui-preview <input.cpp> --max-depth N | --max-nodes N (bound the stdout JSON)\n' +
   '       dali-ui-preview <input.cpp> --overlay <out.png>   (write a Set-of-Mark annotated PNG)\n' +
   '       dali-ui-preview <input.cpp> --at X,Y              (print the topmost node at a pixel)\n' +
   '       dali-ui-preview <input.cpp> --node <id>           (print that node id\'s region)\n' +
+  '       dali-ui-preview <input.cpp> --watch               (re-render on file change; FILE input only)\n' +
   '   (or --version | --help)\n' +
   '\n' +
   'Reads preview code from a file, from STDIN (a `-` positional or a piped\n' +
   'code block), or from an inline --code block, and prints the scene-tree JSON\n' +
   'to stdout. --image is optional; passing it also writes the rendered PNG.\n' +
+  '--format tree prints a human box-drawing tree instead of JSON; --max-depth /\n' +
+  '--max-nodes bound the JSON for token-limited callers. --report writes an HTML\n' +
+  '(.html) or Markdown (.md) report and still prints the JSON tree to stdout.\n' +
   '--at/--node print ONLY their lookup JSON (a bare render prints the full tree);\n' +
   'they are mutually exclusive. --overlay writes an annotated PNG and is\n' +
-  'orthogonal to stdout (the full tree is still printed unless a query flag is set).';
+  'orthogonal to stdout (the full tree is still printed unless a query flag is set).\n' +
+  '--watch requires a FILE input (not stdin / --code).';
 
 /**
  * Read the package version at runtime.
@@ -77,6 +89,28 @@ interface RenderArgs {
   at?: { x: number; y: number };
   /** Structural id from `--node <id>` — print that node's region (F2.4). */
   nodeId?: string;
+  /** Stdout shape from `--format <tree|json>` (default 'json') (M3/F3.1). */
+  format?: 'tree' | 'json';
+  /** Report destination from `--report <file>`; .html or .md by extension (F3.2). */
+  reportOut?: string;
+  /** Max tree depth for the stdout JSON from `--max-depth N` (F3.3). */
+  maxDepth?: number;
+  /** Max node count for the stdout JSON from `--max-nodes N` (F3.3). */
+  maxNodes?: number;
+  /** `--watch`: re-render on file change; requires a FILE input (F3.4). */
+  watch?: boolean;
+}
+
+/**
+ * Parse + validate a non-negative integer flag value (`--max-depth`/`--max-nodes`).
+ * Throws a clear Error when the value is missing or not a base-10 non-negative
+ * integer, so the caller surfaces a usage diagnostic on stderr.
+ */
+function parseCountFlag(flag: string, value: string | undefined): number {
+  if (value === undefined || !/^\d+$/.test(value)) {
+    throw new Error(`${flag} requires a non-negative integer argument.`);
+  }
+  return parseInt(value, 10);
 }
 
 /**
@@ -100,6 +134,11 @@ function parseRenderArgs(argv: string[]): RenderArgs {
   let overlayOut: string | undefined;
   let at: { x: number; y: number } | undefined;
   let nodeId: string | undefined;
+  let format: 'tree' | 'json' | undefined;
+  let reportOut: string | undefined;
+  let maxDepth: number | undefined;
+  let maxNodes: number | undefined;
+  let watch = false;
 
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
@@ -146,6 +185,40 @@ function parseRenderArgs(argv: string[]): RenderArgs {
       }
       nodeId = value;
       i++; // consume the value
+    } else if (arg === '--format') {
+      const value = argv[i + 1];
+      if (value !== 'tree' && value !== 'json') {
+        throw new Error("--format requires a value of 'tree' or 'json'.");
+      }
+      if (format !== undefined) {
+        throw new Error('--format was specified more than once.');
+      }
+      format = value;
+      i++; // consume the value
+    } else if (arg === '--report') {
+      const value = argv[i + 1];
+      if (value === undefined || value.startsWith('-')) {
+        throw new Error('--report requires a path argument.');
+      }
+      if (reportOut !== undefined) {
+        throw new Error('--report was specified more than once.');
+      }
+      reportOut = value;
+      i++; // consume the value
+    } else if (arg === '--max-depth') {
+      if (maxDepth !== undefined) {
+        throw new Error('--max-depth was specified more than once.');
+      }
+      maxDepth = parseCountFlag('--max-depth', argv[i + 1]);
+      i++; // consume the value
+    } else if (arg === '--max-nodes') {
+      if (maxNodes !== undefined) {
+        throw new Error('--max-nodes was specified more than once.');
+      }
+      maxNodes = parseCountFlag('--max-nodes', argv[i + 1]);
+      i++; // consume the value
+    } else if (arg === '--watch') {
+      watch = true;
     } else if (arg === '--code') {
       const value = argv[i + 1];
       // `--code` value may legitimately start with '-' (it's arbitrary C++), so
@@ -180,7 +253,14 @@ function parseRenderArgs(argv: string[]): RenderArgs {
   if (at !== undefined && nodeId !== undefined) {
     throw new Error('pass at most one query flag: --at or --node, not both.');
   }
-  return { input, code, imageOut, overlayOut, at, nodeId };
+  // --watch re-renders the input file on change, so it needs a watchable FILE.
+  // The unwatchable sources are known here: an inline --code block or a `-`/piped
+  // stdin block. (The remaining "no positional + piped stdin" case is rejected in
+  // runRender, where stdin's TTY state is known.)
+  if (watch && (code !== undefined || input === '-')) {
+    throw new Error('--watch requires a FILE input (not stdin or --code).');
+  }
+  return { input, code, imageOut, overlayOut, at, nodeId, format, reportOut, maxDepth, maxNodes, watch };
 }
 
 /**
@@ -213,34 +293,48 @@ async function resolveRenderInput(parsed: RenderArgs): Promise<ResolvedInput> {
 }
 
 /**
- * Render command: resolve input (file | stdin | inline) → template → render in
- * container → build the annotated tree → select stdout per the query flags →
- * write the PNG(s) for `--image` / `--overlay` when supplied.
- *
- * STDOUT carries a SINGLE JSON value (the machine contract, Inv-6): the full scene
- * tree for a bare render, or just the lookup result when `--at` / `--node` is set.
- * `--image` / `--overlay` are file side-effects orthogonal to stdout. Every
- * diagnostic goes to stderr. Returns the process exit code.
+ * Select + write the single stdout emission for one render (the machine contract,
+ * Inv-6). Precedence: a query flag (`--at`/`--node`) prints ONLY its lookup JSON;
+ * otherwise `--format tree` prints the human box-drawing tree, and the default
+ * prints the (optionally `--max-depth`/`--max-nodes`-bounded) full-tree JSON.
+ * Exactly one line is written to stdout.
  */
-async function runRender(argv: string[]): Promise<number> {
-  let parsed: RenderArgs;
-  let resolved: ResolvedInput;
-  try {
-    parsed = parseRenderArgs(argv);
-    // Resolve the input source up front: an "no input given" error here must
-    // surface the usage banner, exactly like an arg-parse error.
-    resolved = await resolveRenderInput(parsed);
-  } catch (err) {
-    console.error(`dali-ui-preview: ${err instanceof Error ? err.message : String(err)}`);
-    console.error(USAGE);
-    return 1;
+function emitStdout(tree: MinimalNode, parsed: RenderArgs): void {
+  if (parsed.at !== undefined) {
+    const hit = nodeAt(tree, parsed.at.x, parsed.at.y);
+    const payload = hit !== null ? toRegion(hit) : { at: [parsed.at.x, parsed.at.y], node: null };
+    process.stdout.write(`${JSON.stringify(payload)}\n`);
+    return;
   }
-
-  if (resolved.code.trim().length === 0) {
-    console.error('dali-ui-preview: input is empty — no preview code to render.');
-    return 1;
+  if (parsed.nodeId !== undefined) {
+    const n = nodeById(tree, parsed.nodeId);
+    process.stdout.write(`${JSON.stringify(n !== null ? toRegion(n) : null)}\n`);
+    return;
   }
+  if (parsed.format === 'tree') {
+    process.stdout.write(`${formatTree(tree)}\n`);
+    return;
+  }
+  // Default JSON. Apply the token bounds only when at least one was given so the
+  // unbounded path is byte-for-byte the M1/M2 output.
+  const bounded =
+    parsed.maxDepth !== undefined || parsed.maxNodes !== undefined
+      ? truncate(tree, { maxDepth: parsed.maxDepth, maxNodes: parsed.maxNodes })
+      : tree;
+  process.stdout.write(`${JSON.stringify(bounded)}\n`);
+}
 
+/**
+ * Run ONE full render→emit pass: template → render in container → build the
+ * annotated tree → write the file side-effects (`--overlay`/`--report`/`--image`)
+ * → emit the single stdout line. Owns its own temp workDir, cleaned up in a
+ * `finally` so each pass (including every watch re-render) leaves no temp dir.
+ * Throws on render/IO failure so the caller decides fatal-vs-recoverable.
+ *
+ * `--overlay`/`--report`/`--image` are file side-effects orthogonal to stdout;
+ * stdout selection is delegated to {@link emitStdout}.
+ */
+async function renderAndEmit(parsed: RenderArgs, resolved: ResolvedInput): Promise<void> {
   let workDir: string | undefined;
   try {
     const source = templateHarness(resolved.code);
@@ -262,18 +356,15 @@ async function runRender(argv: string[]): Promise<number> {
       await renderOverlay(result.pngPath, tree, parsed.overlayOut);
     }
 
-    // STDOUT selection (the contract): a query flag prints ONLY its lookup JSON;
-    // a bare render prints the full tree (M1 behaviour, unchanged).
-    if (parsed.at !== undefined) {
-      const hit = nodeAt(tree, parsed.at.x, parsed.at.y);
-      const payload = hit !== null ? toRegion(hit) : { at: [parsed.at.x, parsed.at.y], node: null };
-      process.stdout.write(`${JSON.stringify(payload)}\n`);
-    } else if (parsed.nodeId !== undefined) {
-      const n = nodeById(tree, parsed.nodeId);
-      process.stdout.write(`${JSON.stringify(n !== null ? toRegion(n) : null)}\n`);
-    } else {
-      process.stdout.write(`${JSON.stringify(tree)}\n`);
+    // --report writes a self-contained HTML/MD report (PNG + box-tree + node
+    // table). Like --overlay it implies render and is orthogonal to stdout: the
+    // JSON tree is still emitted below (the report is purely a file side-effect).
+    if (parsed.reportOut !== undefined) {
+      await writeReport(tree, result.pngPath, parsed.reportOut);
     }
+
+    // The single stdout emission (the contract).
+    emitStdout(tree, parsed);
 
     // PNG is copied out ONLY when --image was supplied; otherwise the harness's PNG
     // stays in the temp workDir and is removed by the finally cleanup below.
@@ -282,15 +373,76 @@ async function runRender(argv: string[]): Promise<number> {
       await fs.promises.mkdir(destDir, { recursive: true });
       await fs.promises.copyFile(result.pngPath, parsed.imageOut);
     }
-
-    return 0;
-  } catch (err) {
-    console.error(`dali-ui-preview: ${err instanceof Error ? err.message : String(err)}`);
-    return 1;
   } finally {
     if (workDir !== undefined) {
       cleanupWorkDir(workDir);
     }
+  }
+}
+
+/**
+ * Render command: resolve input (file | stdin | inline) → template → render in
+ * container → build the annotated tree → select stdout per the query/format flags
+ * → write the file side-effects for `--image` / `--overlay` / `--report`.
+ *
+ * With `--watch` (FILE input only) it renders+emits once, then re-renders+re-emits
+ * on every change to that file until SIGINT/SIGTERM. STDOUT carries a SINGLE
+ * emission per render (JSON tree, box-tree, or a lookup result). Every diagnostic
+ * goes to stderr. Returns the process exit code.
+ */
+async function runRender(argv: string[]): Promise<number> {
+  let parsed: RenderArgs;
+  let resolved: ResolvedInput;
+  try {
+    parsed = parseRenderArgs(argv);
+    // Resolve the input source up front: an "no input given" error here must
+    // surface the usage banner, exactly like an arg-parse error.
+    resolved = await resolveRenderInput(parsed);
+    // --watch needs a watchable FILE; the remaining unwatchable case (no
+    // positional, code piped on stdin) is only detectable here, post-resolve.
+    if (parsed.watch && (parsed.input === undefined || parsed.input === '-')) {
+      throw new Error('--watch requires a FILE input (not stdin or --code).');
+    }
+  } catch (err) {
+    console.error(`dali-ui-preview: ${err instanceof Error ? err.message : String(err)}`);
+    console.error(USAGE);
+    return 1;
+  }
+
+  if (resolved.code.trim().length === 0) {
+    console.error('dali-ui-preview: input is empty — no preview code to render.');
+    return 1;
+  }
+
+  // --watch: an initial render+emit, then re-render on every change to the input
+  // file (debounced) until interrupted. `parsed.input` is a real file path here
+  // (the non-file sources were rejected above). Each pass RE-READS the file so an
+  // edit is picked up; resolved is refreshed per render.
+  if (parsed.watch) {
+    const filePath = parsed.input as string;
+    try {
+      await runWatch(filePath, async () => {
+        const fresh = await resolveInput(filePath);
+        if (fresh.code.trim().length === 0) {
+          console.error('dali-ui-preview: input is empty — no preview code to render.');
+          return;
+        }
+        await renderAndEmit(parsed, fresh);
+      });
+      return 0;
+    } catch (err) {
+      console.error(`dali-ui-preview: ${err instanceof Error ? err.message : String(err)}`);
+      return 1;
+    }
+  }
+
+  // One-shot render.
+  try {
+    await renderAndEmit(parsed, resolved);
+    return 0;
+  } catch (err) {
+    console.error(`dali-ui-preview: ${err instanceof Error ? err.message : String(err)}`);
+    return 1;
   }
 }
 
