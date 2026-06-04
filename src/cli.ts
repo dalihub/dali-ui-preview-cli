@@ -2,9 +2,11 @@
 /*
  * dali-ui-preview CLI entrypoint.
  *
- * WU-1 (M0/F0.1) scope: the build must succeed and `--version` must work.
- * Render / tree wiring (the default `<input> --image <path>` command) lands in
- * later work units (WU-4/WU-5).
+ * Default command (M0/WU-4): `dali-ui-preview <input> --image <out.png>` resolves
+ * the preview code from <input>, templates the DALi harness, renders it inside the
+ * runtime container, and copies the produced PNG to <out.png>. Printing the scene
+ * tree to stdout lands in WU-5 — until then stdout stays empty/parseable and ALL
+ * diagnostics go to stderr.
  *
  * Logging convention (project CLAUDE.md, adapted for a CLI): there is no vscode
  * outputChannel here, and stdout is reserved for the machine contract (later: the
@@ -14,6 +16,9 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
+import { resolveInput } from './inputResolver';
+import { templateHarness } from './harnessTemplater';
+import { renderInContainer, cleanupWorkDir } from './dockerRunner';
 
 const USAGE = 'Usage: dali-ui-preview <input.cpp> --image <out.png>   (or --version | --help)';
 
@@ -35,7 +40,94 @@ function readVersion(): string {
   return pkg.version;
 }
 
-function main(argv: string[]): number {
+/** Parsed form of the default render command's positional + flag arguments. */
+interface RenderArgs {
+  /** Positional input file path (preview file or marker-bearing source). */
+  input: string;
+  /** Destination PNG path from `--image <path>`. */
+  imageOut: string;
+}
+
+/**
+ * Parse the default-command arguments: a single positional `<input>` and a
+ * required `--image <path>`. Unknown flags or missing/duplicate values throw so
+ * the caller can surface a clear diagnostic on stderr.
+ */
+function parseRenderArgs(argv: string[]): RenderArgs {
+  let input: string | undefined;
+  let imageOut: string | undefined;
+
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i];
+    if (arg === '--image') {
+      const value = argv[i + 1];
+      if (value === undefined || value.startsWith('-')) {
+        throw new Error('--image requires a path argument.');
+      }
+      if (imageOut !== undefined) {
+        throw new Error('--image was specified more than once.');
+      }
+      imageOut = value;
+      i++; // consume the value
+    } else if (arg.startsWith('-')) {
+      throw new Error(`unrecognized option: ${arg}`);
+    } else if (input === undefined) {
+      input = arg;
+    } else {
+      throw new Error(`unexpected extra argument: ${arg}`);
+    }
+  }
+
+  if (input === undefined) {
+    throw new Error('missing required <input> argument.');
+  }
+  if (imageOut === undefined) {
+    throw new Error('missing required --image <path> argument.');
+  }
+  return { input, imageOut };
+}
+
+/**
+ * Render command: resolve → template → render in container → copy PNG out.
+ *
+ * STDOUT is kept clean (no tree print until WU-5); every diagnostic goes to
+ * stderr. Returns the process exit code.
+ */
+async function runRender(argv: string[]): Promise<number> {
+  let parsed: RenderArgs;
+  try {
+    parsed = parseRenderArgs(argv);
+  } catch (err) {
+    console.error(`dali-ui-preview: ${err instanceof Error ? err.message : String(err)}`);
+    console.error(USAGE);
+    return 1;
+  }
+
+  let workDir: string | undefined;
+  try {
+    const resolved = resolveInput(parsed.input);
+    const source = templateHarness(resolved.code);
+    const result = await renderInContainer(source);
+    workDir = result.workDir;
+
+    // Copy the produced PNG to the user's --image destination, creating any
+    // missing parent directories.
+    const destDir = path.dirname(path.resolve(parsed.imageOut));
+    await fs.promises.mkdir(destDir, { recursive: true });
+    await fs.promises.copyFile(result.pngPath, parsed.imageOut);
+
+    return 0;
+  } catch (err) {
+    console.error(`dali-ui-preview: ${err instanceof Error ? err.message : String(err)}`);
+    return 1;
+  } finally {
+    if (workDir !== undefined) {
+      cleanupWorkDir(workDir);
+    }
+  }
+}
+
+async function main(argv: string[]): Promise<number> {
   if (argv.includes('--version') || argv.includes('-v')) {
     process.stdout.write(`${readVersion()}\n`);
     return 0;
@@ -46,10 +138,13 @@ function main(argv: string[]): number {
     return 0;
   }
 
-  // Render / tree path arrives in WU-4/WU-5. Until then, anything else is unknown.
-  console.error(`dali-ui-preview: unrecognized arguments: ${argv.join(' ')}`);
-  console.error(USAGE);
-  return 1;
+  // Default command: render <input> and write the PNG to --image.
+  return runRender(argv);
 }
 
-process.exit(main(process.argv.slice(2)));
+main(process.argv.slice(2))
+  .then((code) => process.exit(code))
+  .catch((err) => {
+    console.error(`dali-ui-preview: ${err instanceof Error ? err.message : String(err)}`);
+    process.exit(1);
+  });

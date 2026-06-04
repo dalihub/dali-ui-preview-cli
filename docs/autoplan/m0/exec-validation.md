@@ -22,3 +22,11 @@
 - **Functional (WU-3 acceptance, stronger than build-only)**: `resolveInput(sample)` → preview-file mode, startLine 0, code has 'Hello, Dali!'; `templateHarness(code)` → 11703-char C++ with ZERO `{{...}}` placeholders, embedding user code + `/work/preview.png` + `/work/tree.json` + `1024`/`600` → PASS
 - ✋: none
 - **Verdict: PASS (Tier 3 + functional placeholder check)**
+
+## WU-4 — Container render path → PNG  [F0.3, Tier 2 + §G vision ✋]
+- **Gate A**: `npm run build` (0 errors) → PASS
+- **Gate B (F0.3, verbatim)**: `node out/cli.js samples/hello-dali.preview.dali.cpp --image /tmp/...png` → exit 0, non-empty PNG, valid PNG magic bytes (20147 B) → PASS
+- **✋ Vision judge (§G ③)**: orchestrator Read the PNG → **NO_GOLDEN_BUT_LOOKS_RIGHT** (dark bg + centered white "Hello, Dali!" + gray subtitle, no corruption). Auto-baseline → `tests/golden/hello-dali.png`; queued in `visual-holds.md`.
+- **Retry**: 1 within WU-4 (budget 3) — first render reported "no OK: marker"; root cause: DALi's ANSI-colored stdout prefixes the harness `OK:` line with a reset seq, defeating the start-of-line regex. Fix: strip ANSI in `dockerRunner` before marker detection. Re-render → PASS.
+- **Bonus (F0.5 spike evidence)**: container output confirms D-Bus/AT-SPI is DOWN headless ("cannot get dbus connection", "Accessibility Status DbusClient is not ready"); render proceeds fine with accessibility disabled.
+- **Verdict: PASS (Tier 2 + vision ✋)**
