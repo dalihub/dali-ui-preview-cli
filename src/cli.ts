@@ -19,9 +19,10 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { resolveInput, resolveFromCode, resolveFromStdin, ResolvedInput } from './inputResolver';
-import { templateHarness } from './harnessTemplater';
-import { renderInContainer, cleanupWorkDir } from './dockerRunner';
+import { templateHarness, userCodeOffset, THEME_BACKGROUND } from './harnessTemplater';
+import { renderInContainer, cleanupWorkDir, RenderError } from './dockerRunner';
 import { buildTree, MinimalNode } from './treeModel';
+import { parseGccErrors, formatRawError } from './errorParser';
 import { nodeAt, nodeById, toRegion } from './treeQuery';
 import { renderOverlay } from './overlayRenderer';
 import { formatTree } from './formatters/treeFormatter';
@@ -31,6 +32,49 @@ import { runWatch } from './watch';
 import { imageDiff, ImageDiffResult } from './diff/imageDiff';
 import { treeDiff, TreeDiffResult } from './diff/treeDiff';
 import { buildVerdict, verdictExitCode } from './diff/verdict';
+
+/**
+ * Process exit codes (M5/F5.4). Distinct per failure phase so a caller can branch
+ * on `$?` without parsing stderr. 0/1/20 are the pre-M5 contract (kept); 10/11/12
+ * split the former blanket "1" for a render failure into compile / render /
+ * docker-unavailable.
+ */
+const EXIT = {
+  /** Success. */
+  OK: 0,
+  /** Usage / arg error, or empty input. */
+  USAGE: 1,
+  /** Compile error in the user's code (RenderError, phase 'compile'). */
+  COMPILE_ERROR: 10,
+  /** Render / capture error (RenderError, phase 'render'). */
+  RENDER_ERROR: 11,
+  /** Docker unavailable (the `docker info` preflight failed). */
+  DOCKER_UNAVAILABLE: 12,
+  /** Diff mismatch — the verify verdict diverged (M4; set by verdictExitCode). */
+  DIFF_MISMATCH: 20,
+} as const;
+
+/** The two `--theme` values; each maps to a DALi background color (F5.1). */
+type Theme = 'dark' | 'light';
+
+/** Default LOGICAL render resolution (device pixels = these × dpr). */
+const DEFAULT_RESOLUTION = { w: 1024, h: 600 } as const;
+/** Default theme (the pre-M5 black background). */
+const DEFAULT_THEME: Theme = 'dark';
+/** Default device-pixel ratio. */
+const DEFAULT_DPR = 1;
+
+/**
+ * The structured compile/render error printed (as JSON) to STDERR on a
+ * {@link RenderError} (F5.3). `sourceLine` is the user's absolute source line the
+ * first diagnostic maps to, or null when none could be mapped (e.g. the error is
+ * in harness boilerplate, or it is a render-phase failure with no g++ line).
+ */
+export interface StructuredError {
+  phase: RenderError['phase'];
+  message: string;
+  sourceLine: number | null;
+}
 
 const USAGE =
   'Usage: dali-ui-preview <input.cpp | -> [--image <out.png>]\n' +
@@ -47,6 +91,9 @@ const USAGE =
   '                                                          (verify the render; print a verdict, exit 0 match / 20 diverged)\n' +
   '       dali-ui-preview <input.cpp> --update-baseline --baseline <png> [--baseline-tree <json>]\n' +
   '                                                          (write the current render as the new baseline; exit 0)\n' +
+  '       dali-ui-preview <input.cpp> --resolution WxH       (render size, default 1024x600)\n' +
+  '       dali-ui-preview <input.cpp> --theme dark|light     (background theme, default dark)\n' +
+  '       dali-ui-preview <input.cpp> --dpr N                (device-pixel ratio, default 1)\n' +
   '   (or --version | --help)\n' +
   '\n' +
   'Reads preview code from a file, from STDIN (a `-` positional or a piped\n' +
@@ -62,7 +109,15 @@ const USAGE =
   '--baseline / --baseline-tree VERIFY the render: stdout becomes a single verdict\n' +
   'JSON (image-diff and/or id-keyed tree-diff vs the baseline) and the exit code is\n' +
   '0 when it matches or 20 when it diverges (1 stays a tool error). --update-baseline\n' +
-  '(needs --baseline) instead writes the current render as the new baseline(s).';
+  '(needs --baseline) instead writes the current render as the new baseline(s).\n' +
+  '--resolution WxH sets the logical render size (default 1024x600); --theme dark|light\n' +
+  'picks the background color (default dark); --dpr N (default 1) multiplies the render\n' +
+  'dimensions by N device pixels. The effective {resolution,theme,dpr} are echoed on the\n' +
+  'stdout tree as root.meta.\n' +
+  '\n' +
+  'Exit codes: 0 ok; 1 usage error or empty input; 10 compile error (in your code);\n' +
+  '11 render/capture error; 12 docker unavailable; 20 verify diff mismatch.\n' +
+  'A compile/render failure prints a JSON {phase,message,sourceLine} to stderr.';
 
 /**
  * Read the package version at runtime.
@@ -83,7 +138,7 @@ function readVersion(): string {
 }
 
 /** Parsed form of the default render command's positional + flag arguments. */
-interface RenderArgs {
+export interface RenderArgs {
   /**
    * Positional input. A file path (preview file or marker-bearing source), or
    * `-` meaning "read a code block from stdin". `undefined` when no positional
@@ -118,6 +173,12 @@ interface RenderArgs {
   updateBaseline?: boolean;
   /** Image-diff fail ratio from `--threshold <ratio>` (default 0.01) (F4.1/F4.3). */
   threshold?: number;
+  /** Logical render size from `--resolution WxH` (default 1024x600) (F5.1). */
+  resolution?: { w: number; h: number };
+  /** Background theme from `--theme dark|light` (default dark) (F5.1). */
+  theme?: Theme;
+  /** Device-pixel ratio from `--dpr N` (default 1); scales render dims (F5.1). */
+  dpr?: number;
 }
 
 /**
@@ -144,6 +205,39 @@ function parseRatioFlag(flag: string, value: string | undefined): number {
   const n = parseFloat(value);
   if (!Number.isFinite(n) || n < 0 || n > 1) {
     throw new Error(`${flag} requires a number between 0 and 1.`);
+  }
+  return n;
+}
+
+/**
+ * Parse + validate a `--resolution WxH` value into positive integer logical
+ * dimensions (e.g. `800x480` → `{w:800,h:480}`). Accepts a lowercase or uppercase
+ * `x` separator. Throws a clear usage Error when malformed or non-positive.
+ */
+function parseResolutionFlag(value: string | undefined): { w: number; h: number } {
+  const m = value !== undefined ? /^(\d+)[xX](\d+)$/.exec(value) : null;
+  if (m === null) {
+    throw new Error('--resolution requires a WxH value (e.g. 800x480).');
+  }
+  const w = parseInt(m[1], 10);
+  const h = parseInt(m[2], 10);
+  if (w <= 0 || h <= 0) {
+    throw new Error('--resolution width and height must be positive (e.g. 800x480).');
+  }
+  return { w, h };
+}
+
+/**
+ * Parse + validate a `--dpr N` value: a finite, positive number (integer or
+ * decimal, e.g. `1`, `2`, `1.5`). Throws a clear usage Error otherwise.
+ */
+function parseDprFlag(value: string | undefined): number {
+  if (value === undefined || !/^\d*\.?\d+$/.test(value)) {
+    throw new Error('--dpr requires a positive number (e.g. 1, 2, 1.5).');
+  }
+  const n = parseFloat(value);
+  if (!Number.isFinite(n) || n <= 0) {
+    throw new Error('--dpr requires a positive number (e.g. 1, 2, 1.5).');
   }
   return n;
 }
@@ -178,6 +272,9 @@ function parseRenderArgs(argv: string[]): RenderArgs {
   let baselineTree: string | undefined;
   let updateBaseline = false;
   let threshold: number | undefined;
+  let resolution: { w: number; h: number } | undefined;
+  let theme: Theme | undefined;
+  let dpr: number | undefined;
 
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
@@ -286,6 +383,28 @@ function parseRenderArgs(argv: string[]): RenderArgs {
       }
       threshold = parseRatioFlag('--threshold', argv[i + 1]);
       i++; // consume the value
+    } else if (arg === '--resolution') {
+      if (resolution !== undefined) {
+        throw new Error('--resolution was specified more than once.');
+      }
+      resolution = parseResolutionFlag(argv[i + 1]);
+      i++; // consume the value
+    } else if (arg === '--theme') {
+      const value = argv[i + 1];
+      if (value !== 'dark' && value !== 'light') {
+        throw new Error("--theme requires a value of 'dark' or 'light'.");
+      }
+      if (theme !== undefined) {
+        throw new Error('--theme was specified more than once.');
+      }
+      theme = value;
+      i++; // consume the value
+    } else if (arg === '--dpr') {
+      if (dpr !== undefined) {
+        throw new Error('--dpr was specified more than once.');
+      }
+      dpr = parseDprFlag(argv[i + 1]);
+      i++; // consume the value
     } else if (arg === '--code') {
       const value = argv[i + 1];
       // `--code` value may legitimately start with '-' (it's arbitrary C++), so
@@ -352,7 +471,7 @@ function parseRenderArgs(argv: string[]): RenderArgs {
   }
   return {
     input, code, imageOut, overlayOut, at, nodeId, format, reportOut, maxDepth, maxNodes, watch,
-    baseline, baselineTree, updateBaseline, threshold,
+    baseline, baselineTree, updateBaseline, threshold, resolution, theme, dpr,
   };
 }
 
@@ -383,6 +502,78 @@ async function resolveRenderInput(parsed: RenderArgs): Promise<ResolvedInput> {
   throw new Error(
     'no input given: pass a <input.cpp> file, `-` (or pipe code on stdin), or --code "<text>".',
   );
+}
+
+/** The effective render config derived from the M5 flags (with defaults applied). */
+export interface RenderConfig {
+  /** Logical resolution (the EFFECTIVE values echoed in `root.meta`). */
+  resolution: { w: number; h: number };
+  /** Effective theme. */
+  theme: Theme;
+  /** Effective device-pixel ratio. */
+  dpr: number;
+  /** Device-pixel render width = `resolution.w * dpr` (passed to the harness/container). */
+  deviceWidth: number;
+  /** Device-pixel render height = `resolution.h * dpr` (passed to the harness/container). */
+  deviceHeight: number;
+  /** DALi background-color expression for the chosen theme. */
+  backgroundColor: string;
+}
+
+/**
+ * Resolve the M5 render config from parsed args: apply defaults (1024x600 / dark /
+ * 1), scale the logical resolution by `dpr` into DEVICE pixels (rounded to an
+ * integer, since Xvfb/PREVIEW_WIDTH and the harness float literal are whole
+ * pixels), and pick the theme's background color. The LOGICAL `resolution`/`dpr`
+ * are what `root.meta` echoes (F5.2); the DEVICE dims are what the harness +
+ * container actually render at (F5.1).
+ */
+export function resolveRenderConfig(parsed: RenderArgs): RenderConfig {
+  const resolution = parsed.resolution ?? { w: DEFAULT_RESOLUTION.w, h: DEFAULT_RESOLUTION.h };
+  const theme = parsed.theme ?? DEFAULT_THEME;
+  const dpr = parsed.dpr ?? DEFAULT_DPR;
+  return {
+    resolution,
+    theme,
+    dpr,
+    deviceWidth: Math.round(resolution.w * dpr),
+    deviceHeight: Math.round(resolution.h * dpr),
+    backgroundColor: THEME_BACKGROUND[theme],
+  };
+}
+
+/**
+ * Render the templated harness for `resolved` at `config`'s device dimensions and
+ * theme, returning the raw render result. Centralizes the WU-1 wiring so every
+ * render site (one-shot, watch, verify) passes the SAME width/height to BOTH
+ * `templateHarness` (the `PREVIEW_WIDTH/HEIGHT` float literals + background) AND
+ * `renderInContainer` (the `PREVIEW_WIDTH/HEIGHT` env → Xvfb screen size).
+ */
+async function renderWithConfig(resolved: ResolvedInput, config: RenderConfig) {
+  const source = templateHarness(resolved.code, {
+    width: config.deviceWidth,
+    height: config.deviceHeight,
+    backgroundColor: config.backgroundColor,
+  });
+  return renderInContainer(source, {
+    width: config.deviceWidth,
+    height: config.deviceHeight,
+  });
+}
+
+/**
+ * Attach the effective render config to the ROOT node as `root.meta`
+ * `{ resolution:{w,h}, theme, dpr }` (F5.2), echoing the LOGICAL values (pre-dpr
+ * scaling) plus the dpr. Deterministic and additive — it adds one field and
+ * touches no existing one. Returns the same node for chaining.
+ */
+export function attachMeta(tree: MinimalNode, config: RenderConfig): MinimalNode {
+  tree.meta = {
+    resolution: { w: config.resolution.w, h: config.resolution.h },
+    theme: config.theme,
+    dpr: config.dpr,
+  };
+  return tree;
 }
 
 /**
@@ -430,16 +621,20 @@ function emitStdout(tree: MinimalNode, parsed: RenderArgs): void {
 async function renderAndEmit(parsed: RenderArgs, resolved: ResolvedInput): Promise<void> {
   let workDir: string | undefined;
   try {
-    const source = templateHarness(resolved.code);
-    const result = await renderInContainer(source);
+    const config = resolveRenderConfig(parsed);
+    const result = await renderWithConfig(resolved, config);
     workDir = result.workDir;
 
     // Build the annotated canonical tree (now carrying the M2 `mark`). This is the
     // single source every surface below reads — overlay marks, --at/--node, stdout.
-    const tree = buildTree(result.metadataJson, {
-      sourceCode: resolved.code,
-      startLine: resolved.startLine,
-    });
+    // Echo the effective render config on the root (F5.2).
+    const tree = attachMeta(
+      buildTree(result.metadataJson, {
+        sourceCode: resolved.code,
+        startLine: resolved.startLine,
+      }),
+      config,
+    );
 
     // --overlay writes a Set-of-Mark annotated PNG; it implies render (already
     // done) and is orthogonal to stdout (Inv-6). Written before stdout selection.
@@ -511,14 +706,17 @@ async function loadBaselineTree(baselineTreePath: string): Promise<MinimalNode> 
 async function runVerifyOrUpdate(parsed: RenderArgs, resolved: ResolvedInput): Promise<number> {
   let workDir: string | undefined;
   try {
-    const source = templateHarness(resolved.code);
-    const result = await renderInContainer(source);
+    const config = resolveRenderConfig(parsed);
+    const result = await renderWithConfig(resolved, config);
     workDir = result.workDir;
 
-    const tree = buildTree(result.metadataJson, {
-      sourceCode: resolved.code,
-      startLine: resolved.startLine,
-    });
+    const tree = attachMeta(
+      buildTree(result.metadataJson, {
+        sourceCode: resolved.code,
+        startLine: resolved.startLine,
+      }),
+      config,
+    );
 
     // --image is an orthogonal side-effect: copy the actual render out if asked.
     if (parsed.imageOut !== undefined) {
@@ -564,6 +762,60 @@ async function runVerifyOrUpdate(parsed: RenderArgs, resolved: ResolvedInput): P
 }
 
 /**
+ * Map a {@link RenderError}'s raw container diagnostics to the user's absolute
+ * source line via the vendored gcc parser (F5.3): read the RAW harness template
+ * (where `{{USER_CODE}}` still exists) to get the 1-based offset, run
+ * `parseGccErrors` (which returns a 0-based user-relative line), and add
+ * `resolved.startLine` (the source's absolute offset in its file) to the FIRST
+ * parsed error. Returns the diagnostic's message + that absolute line, or
+ * `formatRawError(stderr)` + null when nothing maps (boilerplate / render-phase).
+ */
+export function mapRenderError(err: RenderError, resolved: ResolvedInput): StructuredError {
+  const offset = userCodeOffset();
+  const parsed = parseGccErrors(err.stderr, offset);
+  if (parsed.length > 0) {
+    const first = parsed[0];
+    return {
+      phase: err.phase,
+      message: first.message,
+      sourceLine: first.line + (resolved.startLine ?? 0),
+    };
+  }
+  return {
+    phase: err.phase,
+    message: formatRawError(err.stderr),
+    sourceLine: null,
+  };
+}
+
+/**
+ * Decide the exit code + diagnostics for a failed render/verify pass (F5.3/F5.4):
+ *   - {@link RenderError} → print the structured `{phase,message,sourceLine}` JSON
+ *     to STDERR (stdout stays empty) and return 10 (compile) / 11 (render);
+ *   - the docker-unavailable preflight Error → return 12;
+ *   - any other Error (IO, bad metadata, …) → the pre-M5 plain stderr line + 1.
+ */
+function handleRenderFailure(err: unknown, resolved: ResolvedInput): number {
+  if (err instanceof RenderError) {
+    const structured = mapRenderError(err, resolved);
+    // The structured error is the machine contract on the failure path: emit it as
+    // a single JSON line to STDERR, leaving stdout empty for the caller's parser.
+    console.error(JSON.stringify(structured));
+    return structured.phase === 'compile' ? EXIT.COMPILE_ERROR : EXIT.RENDER_ERROR;
+  }
+  const message = err instanceof Error ? err.message : String(err);
+  // The `docker info` preflight (dockerRunner) throws this exact plain Error; it is
+  // a distinct, documented failure class (exit 12), kept separate from a usage (1)
+  // or a compile/render (10/11) failure so a script can branch on it.
+  if (/^Docker is not available:/.test(message)) {
+    console.error(`dali-ui-preview: ${message}`);
+    return EXIT.DOCKER_UNAVAILABLE;
+  }
+  console.error(`dali-ui-preview: ${message}`);
+  return EXIT.USAGE;
+}
+
+/**
  * Render command: resolve input (file | stdin | inline) → template → render in
  * container → build the annotated tree → select stdout per the query/format flags
  * → write the file side-effects for `--image` / `--overlay` / `--report`.
@@ -589,25 +841,25 @@ async function runRender(argv: string[]): Promise<number> {
   } catch (err) {
     console.error(`dali-ui-preview: ${err instanceof Error ? err.message : String(err)}`);
     console.error(USAGE);
-    return 1;
+    return EXIT.USAGE;
   }
 
   if (resolved.code.trim().length === 0) {
     console.error('dali-ui-preview: input is empty — no preview code to render.');
-    return 1;
+    return EXIT.USAGE;
   }
 
   // Verify / update-baseline (M4): a one-shot render whose stdout is the verdict
   // JSON (or nothing, for --update-baseline), and whose exit code is 0 = match /
-  // 20 = diverged. A render/IO failure here is a TOOL error (exit 1), kept distinct
-  // from the 20 "rendered, but differs" verdict. Parsed-arg validation already
-  // rejected combining these flags with --watch / --at / --node / --format / --report.
+  // 20 = diverged. A render/IO failure here is a TOOL error, surfaced via the M5
+  // structured-error path (compile→10 / render→11 / docker→12, else 1), kept
+  // distinct from the 20 "rendered, but differs" verdict. Parsed-arg validation
+  // already rejected combining these flags with --watch / --at / --node / --format.
   if (parsed.updateBaseline || parsed.baseline !== undefined || parsed.baselineTree !== undefined) {
     try {
       return await runVerifyOrUpdate(parsed, resolved);
     } catch (err) {
-      console.error(`dali-ui-preview: ${err instanceof Error ? err.message : String(err)}`);
-      return 1;
+      return handleRenderFailure(err, resolved);
     }
   }
 
@@ -628,18 +880,16 @@ async function runRender(argv: string[]): Promise<number> {
       });
       return 0;
     } catch (err) {
-      console.error(`dali-ui-preview: ${err instanceof Error ? err.message : String(err)}`);
-      return 1;
+      return handleRenderFailure(err, resolved);
     }
   }
 
   // One-shot render.
   try {
     await renderAndEmit(parsed, resolved);
-    return 0;
+    return EXIT.OK;
   } catch (err) {
-    console.error(`dali-ui-preview: ${err instanceof Error ? err.message : String(err)}`);
-    return 1;
+    return handleRenderFailure(err, resolved);
   }
 }
 
@@ -667,9 +917,15 @@ async function main(argv: string[]): Promise<number> {
   return runRender(argv);
 }
 
-main(process.argv.slice(2))
-  .then((code) => process.exit(code))
-  .catch((err) => {
-    console.error(`dali-ui-preview: ${err instanceof Error ? err.message : String(err)}`);
-    process.exit(1);
-  });
+// Auto-run ONLY when invoked as the entry script (`out/cli.js` via the `bin`
+// shim). Guarding on `require.main === module` lets the unit tests `require()`
+// this module to exercise its pure helpers (e.g. mapRenderError) WITHOUT executing
+// the CLI and calling `process.exit`.
+if (require.main === module) {
+  main(process.argv.slice(2))
+    .then((code) => process.exit(code))
+    .catch((err) => {
+      console.error(`dali-ui-preview: ${err instanceof Error ? err.message : String(err)}`);
+      process.exit(1);
+    });
+}

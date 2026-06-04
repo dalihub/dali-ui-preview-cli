@@ -14,7 +14,8 @@
  *
  * In-container contract (docker/entrypoint.sh + preview_harness.cpp.template):
  *   - `/work` is the bind-mounted host workDir.
- *   - The entrypoint receives `/work/source.cpp` as its first argument.
+ *   - The entrypoint receives `/work/preview_harness.cpp` as its first argument
+ *     (the basename keeps g++ diagnostics matchable by parseGccErrors — M5/F5.3).
  *   - The binary writes the PNG to the baked-in OUTPUT_PATH (`/work/preview.png`)
  *     and the tree JSON to METADATA_PATH (`/work/tree.json`), then prints
  *     `OK:<png>` to stdout and exits 0. Failure → `CAPTURE_FAILED` / non-zero.
@@ -47,7 +48,15 @@ const DEFAULT_TIMEOUT_MS = 90_000;
 /** Basename the harness writes inside `/work` (must match METADATA/OUTPUT_PATH). */
 const PNG_NAME = 'preview.png';
 const TREE_NAME = 'tree.json';
-const SOURCE_NAME = 'source.cpp';
+/**
+ * Basename of the templated source mounted into `/work` and handed to the
+ * entrypoint. It is named `preview_harness.cpp` (not a generic `source.cpp`) so a
+ * g++ compile diagnostic reads `…/preview_harness.cpp:N:C: error: …` — the
+ * filename the vendored {@link parseGccErrors} matches in default (harness) mode
+ * (M5/F5.3). The entrypoint compiles whatever path it is given, so the basename is
+ * free to choose.
+ */
+const SOURCE_NAME = 'preview_harness.cpp';
 
 /** Outcome of a successful {@link renderInContainer}. */
 export interface RenderResult {
@@ -90,6 +99,50 @@ interface DockerRunOutcome {
     stdout: string;
     stderr: string;
     spawnError?: Error;
+}
+
+/** Which phase of the in-container pipeline a {@link RenderError} failed in. */
+export type RenderPhase = 'compile' | 'render';
+
+/**
+ * Thrown by {@link renderInContainer} when the container fails to produce a render
+ * (M5/F5.3). It carries the RAW container diagnostics so the CLI can run the
+ * vendored `parseGccErrors` over them and surface a structured
+ * `{phase, message, sourceLine}` to the user:
+ *   - `stderr`   — the combined container stdout+stderr (the entrypoint echoes the
+ *                  g++ compile log to stdout, so both streams are merged here to
+ *                  guarantee the diagnostic is present regardless of which stream
+ *                  carried it).
+ *   - `exitCode` — the container's exit status (entrypoint: 2 = compile fail).
+ *   - `phase`    — `'compile'` when the diagnostics contain a g++ `: error:` line,
+ *                  else `'render'` (Xvfb/capture/timeout/spawn failure).
+ */
+export class RenderError extends Error {
+    readonly stderr: string;
+    readonly exitCode: number;
+    readonly phase: RenderPhase;
+
+    constructor(message: string, stderr: string, exitCode: number, phase: RenderPhase) {
+        super(message);
+        this.name = 'RenderError';
+        this.stderr = stderr;
+        this.exitCode = exitCode;
+        this.phase = phase;
+        // Restore the prototype chain so `instanceof RenderError` holds when this
+        // module is compiled to ES5/CommonJS (TS `extends Error` caveat).
+        Object.setPrototypeOf(this, RenderError.prototype);
+    }
+}
+
+/**
+ * Classify a container failure as a compile vs render phase by inspecting the raw
+ * diagnostics: a g++ diagnostic line (`<file>:<line>:<col>: error:`) means the
+ * compile step failed; anything else (Xvfb start, capture, binary crash, timeout)
+ * is a render-phase failure. Matches the `: error:` shape the entrypoint's g++ log
+ * uses, mirroring `formatRawError`'s own error-line heuristic.
+ */
+function classifyPhase(diagnostics: string): RenderPhase {
+    return /:\d+:\d+:\s*error:/.test(diagnostics) ? 'compile' : 'render';
 }
 
 /**
@@ -160,8 +213,11 @@ function dockerRun(args: readonly string[], timeoutMs: number): Promise<DockerRu
  *                         Its baked-in OUTPUT_PATH/METADATA_PATH must point inside
  *                         `/work` (the harness defaults to `/work/preview.png` and
  *                         `/work/tree.json`, which match this mount).
- * @throws  If docker is unavailable, the container fails to spawn, the render
- *          times out, or compile/capture fails (exit non-zero or no `OK:` marker).
+ * @throws  A plain Error if docker is unavailable (the preflight). A
+ *          {@link RenderError} (carrying raw `stderr`, `exitCode`, and a
+ *          `'compile'|'render'` `phase`) if the container fails to spawn, the
+ *          render times out, or compile/capture fails (exit non-zero or no `OK:`
+ *          marker) — so the CLI can surface a structured diagnostic (M5/F5.3).
  */
 export async function renderInContainer(
     templatedSource: string,
@@ -205,16 +261,35 @@ export async function renderInContainer(
         '-e', 'LP_NUM_THREADS=0',
         '-e', 'GALLIUM_DRIVER=llvmpipe',
         ref,
-        '/work/source.cpp',
+        `/work/${SOURCE_NAME}`,
     ];
 
     const outcome = await dockerRun(args, timeoutMs);
 
+    // The entrypoint echoes the g++ compile log to STDOUT (not stderr), so merge
+    // both streams for the diagnostics carried on a RenderError — `parseGccErrors`
+    // and `classifyPhase` then see the compile error wherever it landed.
+    const diagnostics = [outcome.stdout, outcome.stderr]
+        .map((s) => s.trim())
+        .filter((s) => s.length > 0)
+        .join('\n');
+
     if (outcome.spawnError) {
-        throw new Error(`Failed to spawn docker: ${outcome.spawnError.message}`);
+        // A spawn failure produces no compile log → render-phase.
+        throw new RenderError(
+            `Failed to spawn docker: ${outcome.spawnError.message}`,
+            diagnostics,
+            outcome.exitCode,
+            'render',
+        );
     }
     if (outcome.timedOut) {
-        throw new Error(`Container render timed out after ${timeoutMs}ms (image ${ref}).`);
+        throw new RenderError(
+            `Container render timed out after ${timeoutMs}ms (image ${ref}).`,
+            diagnostics,
+            outcome.exitCode,
+            'render',
+        );
     }
 
     // DALi's logger emits ANSI color codes; the harness `OK:` marker line is
@@ -223,13 +298,13 @@ export async function renderInContainer(
     const cleanStdout = outcome.stdout.replace(/\x1b?\[[0-9;]*[a-zA-Z]/g, '');
     const sawOk = /(^|\n)\s*OK:/.test(cleanStdout);
     if (outcome.exitCode !== 0 || !sawOk) {
-        const detail = [outcome.stdout.trim(), outcome.stderr.trim()]
-            .filter((s) => s.length > 0)
-            .join('\n');
-        throw new Error(
+        throw new RenderError(
             `Container render failed (exit ${outcome.exitCode}` +
             `${sawOk ? '' : ', no OK: marker'}) for image ${ref}.` +
-            (detail ? `\n${detail}` : ''),
+            (diagnostics ? `\n${diagnostics}` : ''),
+            diagnostics,
+            outcome.exitCode,
+            classifyPhase(diagnostics),
         );
     }
 
@@ -237,8 +312,12 @@ export async function renderInContainer(
     const metadataPath = path.join(workDir, TREE_NAME);
 
     if (!fs.existsSync(pngPath)) {
-        throw new Error(
+        // Exit 0 + OK: but no PNG on disk → the capture step failed: render-phase.
+        throw new RenderError(
             `Container reported success but no PNG was produced at ${pngPath}.`,
+            diagnostics,
+            outcome.exitCode,
+            'render',
         );
     }
 

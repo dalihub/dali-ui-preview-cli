@@ -9,9 +9,11 @@
  * generated C++ would fail to compile. Some placeholders appear more than once
  * (e.g. `{{BACKGROUND_COLOR}}`, `{{OUTPUT_PATH}}`), so substitution is global.
  *
- * M0 uses fixed defaults: theme / dpr / resolution flags arrive in M5. Width and
- * height are emitted as float literals (`1024.0f`) because the harness declares
- * `static const float PREVIEW_WIDTH = {{PREVIEW_WIDTH}};`.
+ * Width/height/backgroundColor are driven by the M5 `--resolution`/`--dpr`/`--theme`
+ * flags (the CLI computes device pixels = logical × dpr and the theme→color, and
+ * passes them here). Width and height are emitted as float literals (`1024.0f`)
+ * because the harness declares `static const float PREVIEW_WIDTH = {{PREVIEW_WIDTH}};`.
+ * The theme→color map lives here as {@link THEME_BACKGROUND}.
  *
  * Logging convention (project CLAUDE.md, adapted for a CLI): stdout is reserved
  * for the machine contract (the JSON node tree); this module never writes to
@@ -21,6 +23,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
+import { getHarnessCodeOffset } from './errorParser';
 
 /** Tunable substitutions for {@link templateHarness}; all optional in M0. */
 export interface TemplateOptions {
@@ -51,7 +54,7 @@ export interface TemplateOptions {
     templatePath?: string;
 }
 
-/** M0 fixed defaults (no theme / dpr / resolution flags yet — those are M5). */
+/** Default render resolution (M5 `--resolution`/`--dpr` flags override this). */
 const DEFAULT_WIDTH = 1024;
 const DEFAULT_HEIGHT = 600;
 const DEFAULT_BACKGROUND_COLOR = 'Dali::Color::BLACK';
@@ -59,6 +62,18 @@ const DEFAULT_BACKGROUND_COLOR = 'Dali::Color::BLACK';
 const DEFAULT_FONT_SETUP = '    // no custom fonts';
 const DEFAULT_OUTPUT_PATH = '/work/preview.png';
 const DEFAULT_METADATA_PATH = '/work/tree.json';
+
+/**
+ * Theme → DALi background-color expression (M5/F5.1). `dark` keeps the current
+ * default black background; `light` uses DALi's white so a rendered corner pixel
+ * differs from the dark default (the WU-1 assertion). The value is substituted
+ * verbatim into BOTH `window.SetBackgroundColor(...)` and the `Capture.Start(...)`
+ * background argument, so it must be a valid DALi color expression.
+ */
+export const THEME_BACKGROUND: Readonly<Record<'dark' | 'light', string>> = {
+    dark: 'Dali::Color::BLACK',
+    light: 'Dali::Color::WHITE',
+};
 
 /**
  * Resolve the default on-disk location of the harness template.
@@ -131,4 +146,28 @@ export function templateHarness(userCode: string, opts: TemplateOptions = {}): s
     }
 
     return out;
+}
+
+/**
+ * Return the 1-based line on which the `{{USER_CODE}}` placeholder appears in the
+ * RAW (pre-substitution) harness template — the offset that
+ * {@link parseGccErrors} subtracts from a g++ line number to recover the user's
+ * 0-based source line (M5/F5.3). Exposed here so the CLI's error path can map a
+ * compile diagnostic back to the user's code without re-deriving the template
+ * path. Reads the same template {@link templateHarness} fills.
+ *
+ * @param templatePath  Override the template location (for tests). Defaults to
+ *                      `<package root>/server/preview_harness.cpp.template`.
+ * @throws              If the template cannot be read.
+ */
+export function userCodeOffset(templatePath?: string): number {
+    const resolvedPath = templatePath ?? defaultTemplatePath();
+    let template: string;
+    try {
+        template = fs.readFileSync(resolvedPath, 'utf8');
+    } catch (err) {
+        const reason = err instanceof Error ? err.message : String(err);
+        throw new Error(`Cannot read harness template '${resolvedPath}': ${reason}`);
+    }
+    return getHarnessCodeOffset(template);
 }

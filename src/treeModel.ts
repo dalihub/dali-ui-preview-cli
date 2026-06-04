@@ -45,6 +45,13 @@ export interface MinimalNode {
     mark?: number;
     /** Child nodes, in actor child-index order. */
     children?: MinimalNode[];
+    /**
+     * Effective render config echoed on the ROOT node by the CLI (M5/F5.2):
+     * `{ resolution:{w,h}, theme, dpr }` with the LOGICAL resolution (pre-dpr
+     * scaling). Attached post-buildTree in the CLI; absent on non-root nodes and on
+     * trees built outside the CLI render path.
+     */
+    meta?: { resolution: { w: number; h: number }; theme: string; dpr: number };
     /** Other harness-exported fields (id, role, bounds, sourceLine, …). */
     [key: string]: unknown;
 }

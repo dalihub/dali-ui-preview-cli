@@ -1,1 +1,1 @@
-{ "milestone":"M5","completed":[] }
+{ "milestone":"M5","completed":["WU-1","WU-2","WU-3","WU-4","WU-5"],"milestone_done":true,"validated":"npm test 116; structured error exit 10" }
