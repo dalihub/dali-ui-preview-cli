@@ -8,12 +8,16 @@
  */
 #include <dali/dali.h>
 #include <dali/public-api/adaptor-framework/capture.h>
+#include <dali/devel-api/actors/actor-devel.h>
+#include <dali/devel-api/atspi-interfaces/accessible.h>
 #include <dali-ui-foundation/dali-ui-foundation.h>
 #include <dali/devel-api/text-abstraction/font-client.h>
 
 #include <iostream>
 #include <fstream>
 #include <sstream>
+#include <iomanip>
+#include <locale>
 #include <string>
 #include <cmath>
 
@@ -116,29 +120,69 @@ static const char* FlexWrapStr(FlexWrap w)
     }
 }
 
+// === control-type -> canonical role map (M1) ===
+// Maps the concrete (impl) type name returned by ShortTypeName(GetTypeName()) to a
+// canonical semantic role. Returns "" when the type is unmapped; the caller then
+// falls back to the per-actor Accessible GetRoleName() (when meaningful) else "unknown".
+static std::string RoleForType(const std::string& type)
+{
+    if(type == "LabelImpl")                                return "label";
+    if(type == "FlexLayoutImpl")                           return "container";
+    if(type == "Layer")                                    return "panel";
+    if(type == "CameraActor")                              return "camera";
+    if(type == "ImageView"    || type == "ImageViewImpl")  return "image";
+    if(type == "PushButton"   || type == "ButtonImpl")     return "push button";
+    if(type == "TextField"    || type == "TextFieldImpl")  return "entry";
+    return "";
+}
+
 void CollectActorMetadata(Actor actor, std::ostringstream& json,
-                          float pX, float pY, float pW, float pH,
+                          const std::string& idPrefix,
                           bool isFirst = true)
 {
     if(!isFirst) json << ",";
 
     Dali::String name = actor.GetProperty<Dali::String>(Actor::Property::NAME);
-    Vector3 pos = actor.GetCurrentProperty<Vector3>(Actor::Property::POSITION);
-    Vector3 size = actor.GetCurrentProperty<Vector3>(Actor::Property::SIZE);
-    Vector3 anchor = actor.GetCurrentProperty<Vector3>(Actor::Property::PIVOT);
-    Vector3 parentOrigin = actor.GetCurrentProperty<Vector3>(Actor::Property::PARENT_ORIGIN);
 
-    float w = size.x;
-    float h = size.y;
-    // Screen position = parent top-left + parent size * parentOrigin + local position - size * anchor
-    float x = pX + pW * parentOrigin.x + pos.x - w * anchor.x;
-    float y = pY + pH * parentOrigin.y + pos.y - h * anchor.y;
+    // Frame-accurate, absolute screen bounds (replaces the hand-rolled
+    // parentOrigin/anchor math). Rounded to int for a deterministic record.
+    Dali::Rect<float> ext = Dali::DevelActor::CalculateCurrentScreenExtents(actor);
+    int bx = static_cast<int>(std::lround(std::isfinite(ext.x)      ? ext.x      : 0.0f));
+    int by = static_cast<int>(std::lround(std::isfinite(ext.y)      ? ext.y      : 0.0f));
+    int bw = static_cast<int>(std::lround(std::isfinite(ext.width)  ? ext.width  : 0.0f));
+    int bh = static_cast<int>(std::lround(std::isfinite(ext.height) ? ext.height : 0.0f));
 
     std::string typeName = ShortTypeName(std::string(actor.GetTypeName().CStr()));
     if(typeName.empty()) typeName = "Actor";
 
     bool    visible = actor.GetCurrentProperty<bool>(Actor::Property::VISIBLE);
     float   opacity = actor.GetCurrentProperty<float>(Actor::Property::OPACITY);
+
+    // Per-actor accessibility (proven to work headless without D-Bus — M0 spike).
+    // Used for the semantic name and as the role fallback; its presence drives
+    // semanticsSource. Queried per-node inside the DFS (NOT DumpTree-the-string).
+    Dali::Accessibility::Accessible* a11y = Dali::Accessibility::Accessible::Get(actor);
+    bool hasA11y = (a11y != nullptr);
+
+    // Role: control-type map first; else the Accessible role when meaningful; else "unknown".
+    std::string role = RoleForType(typeName);
+    if(role.empty())
+    {
+        if(hasA11y)
+        {
+            std::string a11yRole = a11y->GetRoleName();
+            if(!a11yRole.empty() && a11yRole != "unknown") role = a11yRole;
+        }
+    }
+    if(role.empty()) role = "unknown";
+
+    // Name: prefer the Accessible name when non-empty, else the actor NAME property.
+    std::string nodeName(name.CStr());
+    if(hasA11y)
+    {
+        std::string a11yName = a11y->GetName();
+        if(!a11yName.empty()) nodeName = a11yName;
+    }
 
     // User-facing color: text color for Label/InputField (the visible color the
     // user set via SetTextColor), background color for other Views, transparent
@@ -163,19 +207,22 @@ void CollectActorMetadata(Actor actor, std::ostringstream& json,
     float cb = std::isfinite(color.b) ? color.b : 0.0f;
     float ca = std::isfinite(color.a) ? color.a : 0.0f;
 
-    json << "{\"name\":\"" << JsonEscapeStr(name.CStr()) << "\","
+    json << "{\"id\":\"" << JsonEscapeStr(idPrefix) << "\","
          << "\"type\":\"" << JsonEscapeStr(typeName) << "\","
-         << "\"x\":" << x << ",\"y\":" << y << ","
-         << "\"localX\":" << pos.x << ",\"localY\":" << pos.y << ","
-         << "\"w\":" << w << ",\"h\":" << h << ","
+         << "\"role\":\"" << JsonEscapeStr(role) << "\","
+         << "\"name\":\"" << JsonEscapeStr(nodeName) << "\","
+         << "\"bounds\":{"
+         << "\"x\":" << bx << ",\"y\":" << by << ",\"w\":" << bw << ",\"h\":" << bh
+         << "},"
          << "\"visible\":" << (visible ? "true" : "false") << ","
          << "\"opacity\":" << safeOpacity << ","
          << "\"properties\":{"
          << "\"" << colorKey << "\":[" << cr << "," << cg << "," << cb << "," << ca << "]"
          << "}";
 
-    // FlexLayout-specific properties (runtime computed values)
-    if(typeName == "FlexLayout")
+    // FlexLayout-specific properties (runtime computed values). The concrete impl
+    // type is "FlexLayoutImpl" (not "FlexLayout"), so match the impl name here.
+    if(typeName == "FlexLayoutImpl")
     {
         try
         {
@@ -193,13 +240,17 @@ void CollectActorMetadata(Actor actor, std::ostringstream& json,
         catch(...) { /* graceful degradation if cast fails */ }
     }
 
+    // Provenance of the semantics: "accessible" iff this actor has an Accessible.
+    json << ",\"semanticsSource\":\"" << (hasA11y ? "accessible" : "reconstructed") << "\"";
+
     uint32_t childCount = actor.GetChildCount();
     if(childCount > 0)
     {
         json << ",\"children\":[";
         for(uint32_t i = 0; i < childCount; i++)
         {
-            CollectActorMetadata(actor.GetChildAt(i), json, x, y, w, h, (i == 0));
+            CollectActorMetadata(actor.GetChildAt(i), json,
+                                 idPrefix + "/" + std::to_string(i), (i == 0));
         }
         json << "]";
     }
@@ -208,14 +259,44 @@ void CollectActorMetadata(Actor actor, std::ostringstream& json,
 
 void ExportSceneMetadata(Actor root, const char* metadataPath, float winW, float winH)
 {
-    // RootLayer uses center-origin coords; skip it and start children at (0,0)
-    Vector3 rootSize = root.GetCurrentProperty<Vector3>(Actor::Property::SIZE);
-    float rW = rootSize.x;
-    float rH = rootSize.y;
+    // The synthetic document-root node mirrors the DALi RootLayer. Its structural id
+    // is "0"; its k-th child is "0/k", grandchild "0/k/j" — assigned in this one DFS.
+    std::string rootType = ShortTypeName(std::string(root.GetTypeName().CStr()));
+    if(rootType.empty()) rootType = "Layer";
+
+    std::string rootRole = RoleForType(rootType);
+    if(rootRole.empty()) rootRole = "unknown";
+
+    Dali::Rect<float> rext = Dali::DevelActor::CalculateCurrentScreenExtents(root);
+    int rx = static_cast<int>(std::lround(std::isfinite(rext.x)      ? rext.x      : 0.0f));
+    int ry = static_cast<int>(std::lround(std::isfinite(rext.y)      ? rext.y      : 0.0f));
+    int rw = static_cast<int>(std::lround(std::isfinite(rext.width)  ? rext.width  : 0.0f));
+    int rh = static_cast<int>(std::lround(std::isfinite(rext.height) ? rext.height : 0.0f));
+
+    Dali::Accessibility::Accessible* rootA11y = Dali::Accessibility::Accessible::Get(root);
+    bool rootHasA11y = (rootA11y != nullptr);
+
+    std::string rootName("RootLayer");
+    if(rootHasA11y)
+    {
+        std::string a11yName = rootA11y->GetName();
+        if(!a11yName.empty()) rootName = a11yName;
+    }
 
     std::ostringstream json;
-    json << "{\"root\":{\"name\":\"RootLayer\","
-         << "\"x\":0,\"y\":0,\"w\":" << rW << ",\"h\":" << rH;
+    // Deterministic, locale-independent float formatting (F1.4): every numeric emit
+    // serializes identically run-to-run regardless of host locale.
+    json.imbue(std::locale::classic());
+    json << std::fixed << std::setprecision(3);
+
+    json << "{\"root\":{\"id\":\"0\","
+         << "\"type\":\"" << JsonEscapeStr(rootType) << "\","
+         << "\"role\":\"" << JsonEscapeStr(rootRole) << "\","
+         << "\"name\":\"" << JsonEscapeStr(rootName) << "\","
+         << "\"bounds\":{"
+         << "\"x\":" << rx << ",\"y\":" << ry << ",\"w\":" << rw << ",\"h\":" << rh
+         << "},"
+         << "\"semanticsSource\":\"" << (rootHasA11y ? "accessible" : "reconstructed") << "\"";
 
     uint32_t childCount = root.GetChildCount();
     if(childCount > 0)
@@ -223,7 +304,8 @@ void ExportSceneMetadata(Actor root, const char* metadataPath, float winW, float
         json << ",\"children\":[";
         for(uint32_t i = 0; i < childCount; i++)
         {
-            CollectActorMetadata(root.GetChildAt(i), json, 0.0f, 0.0f, rW, rH, (i == 0));
+            CollectActorMetadata(root.GetChildAt(i), json,
+                                 "0/" + std::to_string(i), (i == 0));
         }
         json << "]";
     }
