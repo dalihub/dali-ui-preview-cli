@@ -1,7 +1,12 @@
-# Project profile (provisional — architect finalizes at P-3 end)
+# Project profile (architect-finalized at P-3 end)
 
 ```yaml
-project_types: [to-be-decided]   # 후보: node-cli  또는  node-cli + cpp-native(harness). architect 가 P-3 에서 확정.
+# Finalized by architect (see docs/autoplan/architecture.md + adr/).
+# Node/TS orchestrator CLI (ADR-001) that drives a vendored, extended C++
+# harness (ADR-002/ADR-003/ADR-007) compiled+run INSIDE the fixed Docker
+# runtime image. Both halves live in-repo: TS in out/, the harness template
+# vendored under server/. Hence node-cli + cpp-native(harness).
+project_types: [node-cli, cpp-native]
 
 host_toolchain:
   node: v24.14.1
@@ -25,10 +30,17 @@ reused_paperclip_infra:
   - ../src/flexMetadata.ts                   # 소스 + 런타임 트리 병합
   - DSL: dali-ui-foundation (Dali::Ui::View, Label, FlexLayout, UiColor) @ ../../dali-web/external/dali-ui
 
-exec_test_tiers_available:   # provisional — test-planner 가 마일스톤별로 구체화
-  tier1: maybe   # PNG golden-image diff (pixelmatch). 컨테이너 렌더 경로 동작 필요 (M0 스파이크).
-  tier2: yes     # CLI 실행 후 stdout JSON / 구조화 로그에 assert
-  tier3: yes     # smoke: --help, exit code, parser/formatter/tree-schema 단위 테스트
+exec_test_tiers_available:   # architect-refined for the Node/TS + one-shot-harness stack; test-planner 가 마일스톤별로 구체화
+  tier1: yes-after-M0   # PNG golden-image diff via pixelmatch+pngjs (ADR-005, already deps).
+                        #   Unlocks once the M0 docker-run render path is green (F0.3); golden
+                        #   determinism guaranteed by rendering inside the fixed image (Inv-4).
+                        #   Pre-M0 it is "maybe" (depends on container render working at all).
+  tier2: yes     # Run the CLI and assert on stdout JSON. PRIMARY tier: stdout JSON is the contract
+                 #   (Inv-6). Includes the byte-identical-across-two-runs check (Inv-3 / F1.4:
+                 #   `render twice | diff` == empty) and tree-diff/verdict exit-code assertions (M4).
+  tier3: yes     # Unit (mocha + c8, lifted from sibling): vendored cppParser, formatters
+                 #   (json/tree/report), tree-schema, idMap, imageDiff/treeDiff, errorParser, and
+                 #   CLI smoke (--help lists flags+exit codes, --version, documented exit codes M5/F5.4).
 
 infra_gaps:
   - "AT-SPI 접근성 브리지(Accessible::DumpTree)가 헤드리스 컨테이너에서 동작하는지 UNVERIFIED — M0 스파이크가 결판; 결과가 트리 스키마(의미 트리 공짜 vs 속성 재구성) 결정."
