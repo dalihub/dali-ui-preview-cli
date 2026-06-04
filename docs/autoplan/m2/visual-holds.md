@@ -1,0 +1,1 @@
+- M2/F2.1 overlay PNG (Set-of-Mark): boxes+marks on FlexLayout/labels — confirm legibility

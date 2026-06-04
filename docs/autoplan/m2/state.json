@@ -1,1 +1,1 @@
-{ "milestone":"M2","cycles_used":1,"cycles_max":3,"wu_in_progress":null,"completed":[],"started_at":"2026-06-04T17:05:53+09:00" }
+{ "milestone":"M2","cycles_used":1,"cycles_max":3,"wu_in_progress":null,"completed":["WU-1","WU-2","WU-3","WU-4"],"milestone_done":true,"validated":"real-exec+vision; npm test 60 passing","started_at":"2026-06-04T17:20:20+09:00" }

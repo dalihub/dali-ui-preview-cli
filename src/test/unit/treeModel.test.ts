@@ -50,6 +50,19 @@ function collectSemanticsSources(node: MinimalNode, out: unknown[] = []): unknow
     return out;
 }
 
+/** Collect every node's `mark` in pre-order (parent before children). */
+function collectMarks(node: MinimalNode, out: unknown[] = []): unknown[] {
+    out.push(node.mark);
+    if (Array.isArray(node.children)) {
+        for (const child of node.children) {
+            if (child !== null && typeof child === 'object') {
+                collectMarks(child as MinimalNode, out);
+            }
+        }
+    }
+    return out;
+}
+
 describe('treeModel.buildTree', () => {
     // The parser caches by code string; reset so sourceLine tests are isolated.
     beforeEach(() => clearParserCache());
@@ -194,6 +207,69 @@ describe('treeModel.buildTree', () => {
             const root = buildTree(fixtureMetadata(), { sourceCode: 'if (x) return Foo::New();' });
             const flex = (root.children as MinimalNode[])[1];
             expect(flex.sourceLine).to.be.undefined;
+        });
+    });
+
+    describe('mark assignment (M2/F2.2)', () => {
+        it('stamps an integer mark on every node, root first', () => {
+            const root = buildTree(fixtureMetadata());
+            const marks = collectMarks(root);
+            expect(marks).to.have.lengthOf(6);
+            for (const m of marks) {
+                expect(m).to.be.a('number');
+                expect(Number.isInteger(m as number)).to.equal(true);
+            }
+            expect(root.mark).to.equal(1);
+        });
+
+        it('assigns the contiguous set 1..N with no gaps or duplicates', () => {
+            const root = buildTree(fixtureMetadata());
+            const marks = collectMarks(root) as number[];
+            const sorted = [...marks].sort((a, b) => a - b);
+            const expected = Array.from({ length: marks.length }, (_, i) => i + 1);
+            expect(sorted).to.deep.equal(expected);
+            expect(new Set(marks).size).to.equal(marks.length);
+        });
+
+        it('follows pre-order on the known fixture shape', () => {
+            // Layer > [CameraActor, FlexLayoutImpl > [Label, Label], CameraActor].
+            const root = buildTree(fixtureMetadata());
+            expect(root.type).to.equal('Layer');
+            expect(root.mark).to.equal(1);
+
+            const children = root.children as MinimalNode[];
+            const firstCamera = children[0];
+            const flex = children[1];
+            const lastCamera = children[2];
+            const labels = flex.children as MinimalNode[];
+
+            expect(firstCamera.type).to.equal('CameraActor');
+            expect(firstCamera.mark).to.equal(2);
+            expect(flex.type).to.equal('FlexLayoutImpl');
+            expect(flex.mark).to.equal(3);
+            expect(labels[0].type).to.equal('LabelImpl');
+            expect(labels[0].mark).to.equal(4);
+            expect(labels[1].type).to.equal('LabelImpl');
+            expect(labels[1].mark).to.equal(5);
+            expect(lastCamera.type).to.equal('CameraActor');
+            expect(lastCamera.mark).to.equal(6);
+        });
+
+        it('marks CameraActor nodes too (uniform, no gaps)', () => {
+            const root = buildTree(fixtureMetadata());
+            const cameras = (root.children as MinimalNode[]).filter(
+                (c) => c.type === 'CameraActor',
+            );
+            expect(cameras).to.have.lengthOf(2);
+            for (const cam of cameras) {
+                expect(cam.mark).to.be.a('number');
+            }
+        });
+
+        it('is deterministic: a second buildTree yields the identical marks', () => {
+            const a = collectMarks(buildTree(fixtureMetadata()));
+            const b = collectMarks(buildTree(fixtureMetadata()));
+            expect(a).to.deep.equal(b);
         });
     });
 });

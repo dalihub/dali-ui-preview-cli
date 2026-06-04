@@ -36,6 +36,13 @@ export interface MinimalNode {
     type: string;
     /** Actor name (may be empty; the root is "RootLayer"). */
     name?: string;
+    /**
+     * Stable ordinal mark (1-based), assigned in the single buildTree DFS
+     * (M2/F2.2). Co-emitted with the harness-authored `id` over the same node
+     * objects in one pre-order walk, so the tree `id`/`mark` and the number the
+     * overlay draws are the SAME emission and cannot drift (Inv-1).
+     */
+    mark?: number;
     /** Child nodes, in actor child-index order. */
     children?: MinimalNode[];
     /** Other harness-exported fields (id, role, bounds, sourceLine, …). */
@@ -71,6 +78,35 @@ function normalizeSemanticsSource(node: MinimalNode): void {
             }
         }
     }
+}
+
+/**
+ * Stamp a stable ordinal `mark` (1-based) on EVERY node in ONE deterministic
+ * pre-order DFS: visit the node, then recurse `children` in array order. Mutates
+ * in place. EVERY node is marked — including internal `CameraActor` nodes — so the
+ * marks are a contiguous `1..N` set with no gaps; downstream surfaces (overlay,
+ * `--at`, `--node`) filter on `bounds`, not on mark presence (Inv-1: the `mark` is
+ * co-assigned with the harness-authored `id` in the single buildTree walk, so the
+ * two cannot drift). Determinism (F1.4/Inv-3): the order is the existing
+ * child-index order with no re-sort, so the same metadata yields identical marks.
+ *
+ * Mirrors `normalizeSemanticsSource`'s null/array guards. The counter is held in a
+ * closed-over box so the recursion shares one generator.
+ */
+function assignMarks(root: MinimalNode): void {
+    const counter = { next: 1 };
+    const walk = (node: MinimalNode): void => {
+        node.mark = counter.next++;
+        const children = node.children;
+        if (Array.isArray(children)) {
+            for (const child of children) {
+                if (child !== null && typeof child === 'object') {
+                    walk(child);
+                }
+            }
+        }
+    };
+    walk(root);
 }
 
 /**
@@ -160,6 +196,12 @@ export function buildTree(metadataJson: string | null, opts?: BuildTreeOptions):
     // F1.1: normalize the harness's `"accessible"` semanticsSource → `"bridge"`
     // across the whole tree (leave `"reconstructed"`/absent as-is).
     normalizeSemanticsSource(root);
+
+    // F2.2 / Inv-1: stamp a stable ordinal `mark` on every node in this SAME
+    // single DFS pass — once, here, after normalization and before the return —
+    // so the returned tree (the one source every formatter and the overlay read)
+    // already carries marks. No second `mark` generator exists.
+    assignMarks(root);
 
     // F1.5: inject parser-derived sourceLine into the runtime user-subtree.
     if (opts !== undefined && typeof opts.sourceCode === 'string') {
