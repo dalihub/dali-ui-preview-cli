@@ -1,0 +1,9 @@
+{
+  "milestone": "M0",
+  "project_types": ["node-cli", "cpp-native"],
+  "cycles_used": 1,
+  "cycles_max": 3,
+  "wu_in_progress": null,
+  "completed": [],
+  "started_at": "2026-06-04T14:10:04+09:00"
+}
