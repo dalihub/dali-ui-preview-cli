@@ -178,6 +178,11 @@ async function runRender(argv: string[]): Promise<number> {
     return 1;
   }
 
+  if (resolved.code.trim().length === 0) {
+    console.error('dali-ui-preview: input is empty — no preview code to render.');
+    return 1;
+  }
+
   let workDir: string | undefined;
   try {
     const source = templateHarness(resolved.code);

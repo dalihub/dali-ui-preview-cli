@@ -33,3 +33,9 @@ END-TO-END (real CLI, all input modes; build green):
 - Note (M6 polish): c8 coverage prints 0% — needs a `.c8rc.json` include config; cosmetic, tests pass.
 - ✋: none
 - **Verdict: PASS**
+
+## M1 reviews + wrap-up
+- **arch-review: DRIFT-MINOR** (mechanism substitutions, ADR-faithful → recorded in ADR-009; none block M2). **external-review: PASS** (reviewer ran the live CLI: all F1.1–F1.5 + 3 input modes demonstrable, byte-exact determinism, IDs survive an edit, pure-JSON stdout, clean failures; 39 genuine unit tests).
+- **Review fix applied**: empty/blank input now rejected immediately (exit 1, "input is empty", no container spin-up) — addresses the external-review robustness note. Verified: real input unaffected, npm test still 39 passing.
+- **Carry-over (later milestones)**: c8 coverage `.c8rc` config + automated F1.2 bounds assertion (M6 polish); friendlier compile-error message via structured errors (M5).
+- **M1 termination signals (safety-rails §5)**: Gate A `npm test` 39 passing ✓; determinism byte-identical ✓; arch DRIFT-MINOR (recorded, non-blocking) ✓; external PASS ✓ → **M1 COMPLETE**.

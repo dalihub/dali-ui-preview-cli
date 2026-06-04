@@ -6,5 +6,8 @@
   "wu_in_progress": null,
   "completed": ["WU-1", "WU-2", "WU-3", "WU-4"],
   "wus_done": true,
+  "arch_review": "DRIFT-MINOR (ADR-009)",
+  "external_review": "PASS",
+  "milestone_done": true,
   "started_at": "2026-06-04T15:17:47+09:00"
 }

@@ -1,2 +1,6 @@
 out/
 node_modules/
+
+# c8 coverage output
+coverage/
+.nyc_output/
