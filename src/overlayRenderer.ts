@@ -2,15 +2,15 @@
  * overlayRenderer.ts — Set-of-Mark image annotator (M2/WU-2: F2.1).
  *
  * Reads the rendered PNG, draws a high-contrast rectangle outline around every
- * drawable node's `bounds`, and stamps that node's `mark` number near the box as a
- * tiny 3×5 bitmap-digit tag, then writes the annotated PNG. The numbers drawn are
- * the very `mark`s of the tree the JSON is built from (Inv-1) — the overlay reads
- * marks from the same annotated tree, it does not re-derive them.
+ * drawable node's `bounds`, and stamps that node's `mark` number near the box as an
+ * upscaled bitmap-digit tag (a filled tag for contrast), then writes the annotated
+ * PNG. The numbers drawn are the very `mark`s of the tree the JSON is built from
+ * (Inv-1) — the overlay reads marks from the same annotated tree, not re-derived.
  *
  * "Drawable" = numeric `bounds`, NON-DEGENERATE (`w>0 && h>0`), at least partially
  * on-canvas. That excludes the zero-area `CameraActor` boxes (ADR-008) and anything
  * fully off-canvas. Drawing is fully deterministic: fixed colours, a fixed font
- * bitmap, nodes drawn in `mark` order, no timestamps / text chunks.
+ * bitmap, a fixed integer upscale, nodes drawn in `mark` order, no timestamps.
  *
  * The PNG is RGBA, 4 bytes/px (`pngjs@7` `PNG.sync.read` → `{width,height,data}`).
  * The only side effects are the two fs calls (read src, write dest); everything
@@ -34,17 +34,25 @@ export interface OverlayResult {
 
 /** Outline colour: opaque magenta `#FF00FF` — high contrast over any render. */
 const OUTLINE = { r: 0xff, g: 0x00, b: 0xff } as const;
-/** Tag background behind the digits: opaque black, so digits stay legible. */
-const TAG_BG = { r: 0x00, g: 0x00, b: 0x00 } as const;
-/** Digit ink: opaque white on the black tag. */
+/** Tag background behind the digits: opaque magenta, so the tag reads as the box's. */
+const TAG_BG = { r: 0xff, g: 0x00, b: 0xff } as const;
+/** Digit ink: opaque white on the magenta tag (high contrast, legible). */
 const TAG_INK = { r: 0xff, g: 0xff, b: 0xff } as const;
 
-/** Digit glyph geometry. */
+/** Box outline thickness in px (thicker = visible over busy renders). */
+const OUTLINE_THICKNESS = 2;
+/** Base digit glyph geometry (a 3×5 bitmap font). */
 const GLYPH_W = 3;
 const GLYPH_H = 5;
-/** Pixel gap between adjacent digit glyphs inside a tag. */
+/**
+ * Integer upscale for the mark tag so the digits are actually legible: each font
+ * pixel becomes a `GLYPH_SCALE`×`GLYPH_SCALE` block, so a digit renders at
+ * (3·S)×(5·S) px (S=5 → 15×25). Fixed → the overlay stays byte-deterministic.
+ */
+const GLYPH_SCALE = 5;
+/** Gap between adjacent digit glyphs, in *font* px (scaled with the digits). */
 const GLYPH_GAP = 1;
-/** Padding (px) of black tag background around the digit run. */
+/** Padding around the digit run inside the tag, in *font* px (scaled). */
 const TAG_PAD = 1;
 
 /**
@@ -113,9 +121,9 @@ function setPixel(
 }
 
 /**
- * Draw a 1-px rectangle outline along the four edges of `{x,y,w,h}`. Edges are
- * clamped to the canvas by `setPixel`, so a box hanging off the canvas draws only
- * its on-canvas portion.
+ * Draw a `thickness`-px rectangle outline (concentric rings) along the edges of
+ * `{x,y,w,h}`. Edges are clamped to the canvas by `setPixel`, so a box hanging off
+ * the canvas draws only its on-canvas portion.
  */
 function drawRectOutline(
     data: Buffer,
@@ -126,25 +134,27 @@ function drawRectOutline(
     w: number,
     h: number,
     color: { r: number; g: number; b: number },
+    thickness: number = OUTLINE_THICKNESS,
 ): void {
     const left = Math.round(x);
     const top = Math.round(y);
     const right = Math.round(x + w) - 1;
     const bottom = Math.round(y + h) - 1;
 
-    for (let px = left; px <= right; px++) {
-        setPixel(data, width, height, px, top, color);
-        setPixel(data, width, height, px, bottom, color);
-    }
-    for (let py = top; py <= bottom; py++) {
-        setPixel(data, width, height, left, py, color);
-        setPixel(data, width, height, right, py, color);
+    for (let t = 0; t < thickness; t++) {
+        for (let px = left + t; px <= right - t; px++) {
+            setPixel(data, width, height, px, top + t, color);
+            setPixel(data, width, height, px, bottom - t, color);
+        }
+        for (let py = top + t; py <= bottom - t; py++) {
+            setPixel(data, width, height, left + t, py, color);
+            setPixel(data, width, height, right - t, py, color);
+        }
     }
 }
 
 /**
- * Fill a solid rectangle (inclusive of its top-left origin, `fw`×`fh` pixels) with
- * an opaque colour. Used for the tag background behind the digits.
+ * Fill a solid rectangle (top-left origin, `fw`×`fh` px) with an opaque colour.
  */
 function fillRect(
     data: Buffer,
@@ -164,8 +174,8 @@ function fillRect(
 }
 
 /**
- * Draw a single digit glyph with its top-left at (x,y): ink pixels where the 3×5
- * font mask has a set bit.
+ * Draw a single digit glyph (upscaled by {@link GLYPH_SCALE}) with its top-left at
+ * (x,y): each set font-bit becomes a `GLYPH_SCALE`×`GLYPH_SCALE` ink block.
  */
 function drawGlyph(
     data: Buffer,
@@ -184,16 +194,20 @@ function drawGlyph(
         for (let col = 0; col < GLYPH_W; col++) {
             // Read columns MSB-first across the 3-wide mask.
             if ((bits & (1 << (GLYPH_W - 1 - col))) !== 0) {
-                setPixel(data, width, height, x + col, y + row, TAG_INK);
+                fillRect(
+                    data, width, height,
+                    x + col * GLYPH_SCALE, y + row * GLYPH_SCALE,
+                    GLYPH_SCALE, GLYPH_SCALE, TAG_INK,
+                );
             }
         }
     }
 }
 
 /**
- * Draw `mark`'s decimal digits as a filled black tag with white digits, anchored so
- * the tag sits just inside the top-left corner of the box (kept within the canvas
- * when the corner is near an edge).
+ * Draw `mark`'s decimal digits as a filled magenta tag with white (upscaled) digits,
+ * anchored so the tag sits just inside the top-left corner of the box (kept within
+ * the canvas when the corner is near an edge).
  */
 function drawMarkTag(
     data: Buffer,
@@ -204,9 +218,14 @@ function drawMarkTag(
     mark: number,
 ): void {
     const text = String(mark);
-    const runW = text.length * GLYPH_W + (text.length - 1) * GLYPH_GAP;
-    const tagW = runW + TAG_PAD * 2;
-    const tagH = GLYPH_H + TAG_PAD * 2;
+    const glyphW = GLYPH_W * GLYPH_SCALE;
+    const glyphH = GLYPH_H * GLYPH_SCALE;
+    const gap = GLYPH_GAP * GLYPH_SCALE;
+    const pad = TAG_PAD * GLYPH_SCALE;
+
+    const runW = text.length * glyphW + (text.length - 1) * gap;
+    const tagW = runW + pad * 2;
+    const tagH = glyphH + pad * 2;
 
     // Anchor at the box's top-left, clamped so the whole tag stays on canvas.
     let tagX = Math.round(boxX);
@@ -226,11 +245,11 @@ function drawMarkTag(
 
     fillRect(data, width, height, tagX, tagY, tagW, tagH, TAG_BG);
 
-    let cursorX = tagX + TAG_PAD;
-    const cursorY = tagY + TAG_PAD;
+    let cursorX = tagX + pad;
+    const cursorY = tagY + pad;
     for (const ch of text) {
         drawGlyph(data, width, height, ch, cursorX, cursorY);
-        cursorX += GLYPH_W + GLYPH_GAP;
+        cursorX += glyphW + gap;
     }
 }
 
@@ -270,8 +289,12 @@ export async function renderOverlay(
     });
     drawables.sort((a, c) => a.mark - c.mark);
 
-    for (const { mark, b } of drawables) {
+    // Draw all outlines first, then all tags, so a neighbouring box edge never
+    // overdraws a tag's digits.
+    for (const { b } of drawables) {
         drawRectOutline(data, width, height, b.x, b.y, b.w, b.h, OUTLINE);
+    }
+    for (const { mark, b } of drawables) {
         drawMarkTag(data, width, height, b.x, b.y, mark);
     }
 
