@@ -28,6 +28,7 @@
  */
 
 import * as fs from 'fs';
+import { applyPreviewTransforms } from './codeTransform';
 
 /** Result of resolving a CLI input file path to preview code. */
 export interface ResolvedInput {
@@ -42,6 +43,16 @@ export interface ResolvedInput {
     mode: 'preview-file' | 'marker' | 'inline' | 'stdin';
     /** Absolute or caller-supplied path of the resolved source file. */
     sourcePath: string;
+}
+
+/**
+ * Build a ResolvedInput, applying the shared preview transforms (emoji sanitize +
+ * vector→.Children) to the code first — same as the VS Code extension, since the
+ * CLI renders in the same docker image. Both transforms preserve line count, so
+ * startLine (and any downstream line mapping) stays valid.
+ */
+function finalize(code: string, startLine: number, mode: ResolvedInput['mode'], sourcePath: string): ResolvedInput {
+    return { code: applyPreviewTransforms(code).code, startLine, mode, sourcePath };
 }
 
 /** A `*.preview.dali.cpp` file is treated as pure preview code. */
@@ -72,12 +83,7 @@ export function resolveInput(filePath: string): ResolvedInput {
 
     // --- Mode 1: dedicated preview file — whole body is the preview code ---
     if (filePath.endsWith(PREVIEW_FILE_SUFFIX)) {
-        return {
-            code: raw,
-            startLine: 0,
-            mode: 'preview-file',
-            sourcePath: filePath,
-        };
+        return finalize(raw, 0, 'preview-file', filePath);
     }
 
     // --- Mode 2: marker-delimited region inside a regular .cpp / .h ---
@@ -89,12 +95,7 @@ export function resolveInput(filePath: string): ResolvedInput {
                 `'${MARKER_BEGIN}' / '${MARKER_END}' marker pair with code between them.`,
             );
         }
-        return {
-            code: region.code,
-            startLine: region.startLine,
-            mode: 'marker',
-            sourcePath: filePath,
-        };
+        return finalize(region.code, region.startLine, 'marker', filePath);
     }
 
     throw new Error(
@@ -155,20 +156,10 @@ function extractMarkerRegion(raw: string): { code: string; startLine: number } |
 export function resolveFromCode(code: string, sourcePath = '<code>'): ResolvedInput {
     const region = extractMarkerRegion(code);
     if (region !== null) {
-        return {
-            code: region.code,
-            startLine: region.startLine,
-            mode: 'marker',
-            sourcePath,
-        };
+        return finalize(region.code, region.startLine, 'marker', sourcePath);
     }
 
-    return {
-        code,
-        startLine: 0,
-        mode: 'inline',
-        sourcePath,
-    };
+    return finalize(code, 0, 'inline', sourcePath);
 }
 
 /**
