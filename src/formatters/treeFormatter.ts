@@ -5,10 +5,10 @@
  * `formatTree(root)` walks the same `MinimalNode` tree `buildTree` returns and
  * emits one line per node in an indented box-drawing hierarchy, e.g.:
  *
- *   Layer "RootLayer" #1  [0]  (1024x600 @ 0,0)
- *   ┠╴ CameraActor "" #2  [0/0]  (0x0 @ 0,0)
- *   ┖╴ FlexLayoutImpl "" #3  [0/1]  (1024x600 @ 0,0)
- *      ┖╴ LabelImpl "Hello" #4  [0/1/0]  (262x56 @ 381,262)
+ *   Layer "RootLayer" #1  [0]  (1920x1080 @ 0,0)
+ *   ┠╴ CameraActor "" #2  [0/0]  (0x0 @ 960,540)
+ *   ┖╴ FlexLayoutImpl "" #3  [0/1]  (1920x1080 @ 0,0)
+ *      ┖╴ LabelImpl "Hello" #4  [0/1/0]  (262x56 @ 829,502)
  *
  * Per line: `Type "name" #mark  [id]  (WxH @ x,y)`. A child that is NOT the last
  * sibling is prefixed `┠╴` and its descendants continue under a `┃ ` rail; the
@@ -18,7 +18,7 @@
  * embeds it verbatim.
  */
 
-import { MinimalNode } from './../treeModel';
+import { MinimalNode } from '../treeModel';
 
 /** Connector drawn before a non-last child. */
 const TEE = '┠╴';

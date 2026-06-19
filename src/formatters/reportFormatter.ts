@@ -20,9 +20,9 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import { MinimalNode } from './../treeModel';
+import { MinimalNode } from '../treeModel';
 import { formatTree } from './treeFormatter';
-import { forEachNode } from './../treeQuery';
+import { forEachNode } from '../treeQuery';
 
 /** One flattened row of the node table. */
 interface NodeRow {

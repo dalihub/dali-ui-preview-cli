@@ -18,13 +18,13 @@ function args(over: Partial<RenderArgs>): RenderArgs {
 
 describe('M5 render config (F5.1) + meta echo (F5.2)', () => {
     describe('resolveRenderConfig', () => {
-        it('applies the defaults (1024x600 / dark / dpr 1) when no flags are given', () => {
+        it('applies the defaults (1920x1080 / dark / dpr 1) when no flags are given', () => {
             const c = resolveRenderConfig(args({}));
-            expect(c.resolution).to.deep.equal({ w: 1024, h: 600 });
+            expect(c.resolution).to.deep.equal({ w: 1920, h: 1080 });
             expect(c.theme).to.equal('dark');
             expect(c.dpr).to.equal(1);
-            expect(c.deviceWidth).to.equal(1024);
-            expect(c.deviceHeight).to.equal(600);
+            expect(c.deviceWidth).to.equal(1920);
+            expect(c.deviceHeight).to.equal(1080);
             expect(c.backgroundColor).to.equal('Dali::Color::BLACK');
         });
 
@@ -80,7 +80,7 @@ describe('M5 render config (F5.1) + meta echo (F5.2)', () => {
         it('echoes the defaults when no flags were passed', () => {
             const root: MinimalNode = { type: 'Layer' };
             attachMeta(root, resolveRenderConfig(args({})));
-            expect(root.meta).to.deep.equal({ resolution: { w: 1024, h: 600 }, theme: 'dark', dpr: 1 });
+            expect(root.meta).to.deep.equal({ resolution: { w: 1920, h: 1080 }, theme: 'dark', dpr: 1 });
         });
 
         it('does not disturb existing root fields (additive)', () => {

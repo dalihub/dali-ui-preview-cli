@@ -27,9 +27,9 @@ import { getHarnessCodeOffset } from './errorParser';
 
 /** Tunable substitutions for {@link templateHarness}; all optional in M0. */
 export interface TemplateOptions {
-    /** Preview width in px (default 1024). Emitted as a `<n>.0f` float literal. */
+    /** Preview width in px (default 1920). Emitted as a `<n>.0f` float literal. */
     width?: number;
-    /** Preview height in px (default 600). Emitted as a `<n>.0f` float literal. */
+    /** Preview height in px (default 1080). Emitted as a `<n>.0f` float literal. */
     height?: number;
     /**
      * A valid DALi color expression used both for `window.SetBackgroundColor(...)`
@@ -54,9 +54,10 @@ export interface TemplateOptions {
     templatePath?: string;
 }
 
-/** Default render resolution (M5 `--resolution`/`--dpr` flags override this). */
-const DEFAULT_WIDTH = 1024;
-const DEFAULT_HEIGHT = 600;
+/** Default render resolution (M5 `--resolution`/`--dpr` flags override this).
+ *  TV FHD — DALi UI apps target the TV. */
+const DEFAULT_WIDTH = 1920;
+const DEFAULT_HEIGHT = 1080;
 const DEFAULT_BACKGROUND_COLOR = 'Dali::Color::BLACK';
 // A comment keeps the OnInit body valid while injecting nothing.
 const DEFAULT_FONT_SETUP = '    // no custom fonts';

@@ -65,8 +65,9 @@ const EXIT = {
 /** The two `--theme` values; each maps to a DALi background color (F5.1). */
 type Theme = 'dark' | 'light';
 
-/** Default LOGICAL render resolution (device pixels = these × dpr). */
-const DEFAULT_RESOLUTION = { w: 1024, h: 600 } as const;
+/** Default LOGICAL render resolution (device pixels = these × dpr). TV FHD —
+ *  DALi UI apps target the TV; override per render with `--resolution WxH`. */
+const DEFAULT_RESOLUTION = { w: 1920, h: 1080 } as const;
 /** Default theme (the pre-M5 black background). */
 const DEFAULT_THEME: Theme = 'dark';
 /** Default device-pixel ratio. */
@@ -100,7 +101,7 @@ const USAGE =
   '                                                              (verify the render; print a verdict, exit 0 match / 20 diverged)\n' +
   '       dali-ui-preview-cli <input.cpp> --update-baseline --baseline <png> [--baseline-tree <json>]\n' +
   '                                                              (write the current render as the new baseline; exit 0)\n' +
-  '       dali-ui-preview-cli <input.cpp> --resolution WxH       (render size, default 1024x600)\n' +
+  '       dali-ui-preview-cli <input.cpp> --resolution WxH       (render size, default 1920x1080)\n' +
   '       dali-ui-preview-cli <input.cpp> --theme dark|light     (background theme, default dark)\n' +
   '       dali-ui-preview-cli <input.cpp> --dpr N                (device-pixel ratio, default 1)\n' +
   '       dali-ui-preview-cli <input.cpp> --image-tag <tag>      (runtime image tag for THIS render, default latest)\n' +
@@ -123,7 +124,7 @@ const USAGE =
   'JSON (image-diff and/or id-keyed tree-diff vs the baseline) and the exit code is\n' +
   '0 when it matches or 20 when it diverges (1 stays a tool error). --update-baseline\n' +
   '(needs --baseline) instead writes the current render as the new baseline(s).\n' +
-  '--resolution WxH sets the logical render size (default 1024x600); --theme dark|light\n' +
+  '--resolution WxH sets the logical render size (default 1920x1080); --theme dark|light\n' +
   'picks the background color (default dark); --dpr N (default 1) multiplies the render\n' +
   'dimensions by N device pixels. The effective {resolution,theme,dpr} are echoed on the\n' +
   'stdout tree as root.meta.\n' +
@@ -192,7 +193,7 @@ export interface RenderArgs {
   updateBaseline?: boolean;
   /** Image-diff fail ratio from `--threshold <ratio>` (default 0.01) (F4.1/F4.3). */
   threshold?: number;
-  /** Logical render size from `--resolution WxH` (default 1024x600) (F5.1). */
+  /** Logical render size from `--resolution WxH` (default 1920x1080) (F5.1). */
   resolution?: { w: number; h: number };
   /** Background theme from `--theme dark|light` (default dark) (F5.1). */
   theme?: Theme;
@@ -610,7 +611,7 @@ export interface RenderConfig {
 }
 
 /**
- * Resolve the M5 render config from parsed args: apply defaults (1024x600 / dark /
+ * Resolve the M5 render config from parsed args: apply defaults (1920x1080 / dark /
  * 1), scale the logical resolution by `dpr` into DEVICE pixels (rounded to an
  * integer, since Xvfb/PREVIEW_WIDTH and the harness float literal are whole
  * pixels), and pick the theme's background color. The LOGICAL `resolution`/`dpr`

@@ -61,14 +61,14 @@ dali-ui-preview-cli samples/hello-dali.preview.dali.cpp
   "role": "panel",
   "name": "RootLayer",
   "mark": 1,
-  "bounds": { "x": 0, "y": 0, "w": 1024, "h": 600 },
+  "bounds": { "x": 0, "y": 0, "w": 1920, "h": 1080 },
   "children": [
     {
       "id": "0/1",
       "type": "FlexLayoutImpl",
       "role": "container",
       "mark": 3,
-      "bounds": { "x": 0, "y": 0, "w": 1024, "h": 600 },
+      "bounds": { "x": 0, "y": 0, "w": 1920, "h": 1080 },
       "sourceLine": 13,
       "flexProps": { "direction": "COLUMN", "alignItems": "CENTER", "justifyContent": "CENTER", "wrap": "NO_WRAP" },
       "children": [
@@ -78,7 +78,7 @@ dali-ui-preview-cli samples/hello-dali.preview.dali.cpp
           "role": "label",
           "text": "Hello, Dali!",
           "mark": 4,
-          "bounds": { "x": 381, "y": 262, "w": 262, "h": 56 },
+          "bounds": { "x": 829, "y": 502, "w": 262, "h": 56 },
           "sourceLine": 21,
           "children": []
         },
@@ -88,14 +88,14 @@ dali-ui-preview-cli samples/hello-dali.preview.dali.cpp
           "role": "label",
           "text": "Edit this file to see the preview update",
           "mark": 5,
-          "bounds": { "x": 251, "y": 322, "w": 522, "h": 22 },
+          "bounds": { "x": 787, "y": 558, "w": 346, "h": 20 },
           "sourceLine": 25,
           "children": []
         }
       ]
     }
   ],
-  "meta": { "resolution": { "w": 1024, "h": 600 }, "theme": "dark", "dpr": 1 }
+  "meta": { "resolution": { "w": 1920, "h": 1080 }, "theme": "dark", "dpr": 1 }
 }
 ```
 
@@ -149,7 +149,7 @@ dali-ui-preview-cli samples/hello-dali.preview.dali.cpp --at 500,290
 ```
 
 ```json
-{ "id": "0/1/0", "mark": 4, "type": "LabelImpl", "role": "label", "bounds": { "x": 381, "y": 262, "w": 262, "h": 56 } }
+{ "id": "0/1/0", "mark": 4, "type": "LabelImpl", "role": "label", "bounds": { "x": 829, "y": 502, "w": 262, "h": 56 } }
 ```
 
 또는 id로 노드의 영역 조회:
@@ -167,12 +167,12 @@ dali-ui-preview-cli samples/hello-dali.preview.dali.cpp --format tree
 ```
 
 ```text
-Layer "RootLayer" #1  [0]  (1024x600 @ 0,0)
-┠╴ CameraActor "" #2  [0/0]  (0x0 @ 0,0)
-┠╴ FlexLayoutImpl "" #3  [0/1]  (1024x600 @ 0,0)
-┃  ┠╴ LabelImpl "" #4  [0/1/0]  (262x56 @ 381,262)
-┃  ┖╴ LabelImpl "" #5  [0/1/1]  (522x22 @ 251,322)
-┖╴ CameraActor "" #6  [0/2]  (0x0 @ 0,0)
+Layer "RootLayer" #1  [0]  (1920x1080 @ 0,0)
+┠╴CameraActor "DefaultCamera" #2  [0/0]  (0x0 @ 960,540)
+┠╴FlexLayoutImpl "" #3  [0/1]  (1920x1080 @ 0,0)
+┃ ┠╴LabelImpl "" #4  [0/1/0]  (262x56 @ 829,502)
+┃ ┖╴LabelImpl "" #5  [0/1/1]  (346x20 @ 787,558)
+┖╴CameraActor "CaptureDefaultCamera" #6  [0/2]  (0x0 @ 960,540)
 ```
 
 박스 트리 줄에는 액터의 `name`이 표시됩니다(라벨은 비어 있음). 화면에 보이는 글자는 JSON의 `text` 필드에 있습니다. `--format json`이 기본값입니다.
@@ -240,7 +240,7 @@ echo "exit: $?"
 dali-ui-preview-cli samples/hello-dali.preview.dali.cpp --resolution 800x480 --theme light --dpr 2
 ```
 
-- `--resolution WxH` — 논리적 렌더 크기(기본값 `1024x600`).
+- `--resolution WxH` — 논리적 렌더 크기(기본값 `1920x1080`, TV FHD 프로파일).
 - `--theme dark|light` — 배경 테마(기본값 `dark`).
 - `--dpr N` — 장치 픽셀 비율(device-pixel ratio, 기본값 `1`); 실제 렌더는 `resolution × dpr` 장치 픽셀.
 
@@ -314,7 +314,7 @@ dali-ui-preview-cli samples/hello-dali.preview.dali.cpp --image-tag dali_2.5.18
 **루트** 노드는 추가로 `meta`를 가집니다:
 
 ```json
-"meta": { "resolution": { "w": 1024, "h": 600 }, "theme": "dark", "dpr": 1 }
+"meta": { "resolution": { "w": 1920, "h": 1080 }, "theme": "dark", "dpr": 1 }
 ```
 
 참고: DALi는 내부 `CameraActor` 형제 노드(넓이 0짜리 상자)를 끼워 넣습니다. `--at`/`--node`는 퇴화한 상자를 무시하므로, 카메라는 픽셀 조회에 절대 걸리지 않습니다.

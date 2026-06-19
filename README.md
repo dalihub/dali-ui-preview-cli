@@ -61,14 +61,14 @@ dali-ui-preview-cli samples/hello-dali.preview.dali.cpp
   "role": "panel",
   "name": "RootLayer",
   "mark": 1,
-  "bounds": { "x": 0, "y": 0, "w": 1024, "h": 600 },
+  "bounds": { "x": 0, "y": 0, "w": 1920, "h": 1080 },
   "children": [
     {
       "id": "0/1",
       "type": "FlexLayoutImpl",
       "role": "container",
       "mark": 3,
-      "bounds": { "x": 0, "y": 0, "w": 1024, "h": 600 },
+      "bounds": { "x": 0, "y": 0, "w": 1920, "h": 1080 },
       "sourceLine": 13,
       "flexProps": { "direction": "COLUMN", "alignItems": "CENTER", "justifyContent": "CENTER", "wrap": "NO_WRAP" },
       "children": [
@@ -78,7 +78,7 @@ dali-ui-preview-cli samples/hello-dali.preview.dali.cpp
           "role": "label",
           "text": "Hello, Dali!",
           "mark": 4,
-          "bounds": { "x": 381, "y": 262, "w": 262, "h": 56 },
+          "bounds": { "x": 829, "y": 502, "w": 262, "h": 56 },
           "sourceLine": 21,
           "children": []
         },
@@ -88,14 +88,14 @@ dali-ui-preview-cli samples/hello-dali.preview.dali.cpp
           "role": "label",
           "text": "Edit this file to see the preview update",
           "mark": 5,
-          "bounds": { "x": 251, "y": 322, "w": 522, "h": 22 },
+          "bounds": { "x": 787, "y": 558, "w": 346, "h": 20 },
           "sourceLine": 25,
           "children": []
         }
       ]
     }
   ],
-  "meta": { "resolution": { "w": 1024, "h": 600 }, "theme": "dark", "dpr": 1 }
+  "meta": { "resolution": { "w": 1920, "h": 1080 }, "theme": "dark", "dpr": 1 }
 }
 ```
 
@@ -149,7 +149,7 @@ dali-ui-preview-cli samples/hello-dali.preview.dali.cpp --at 500,290
 ```
 
 ```json
-{ "id": "0/1/0", "mark": 4, "type": "LabelImpl", "role": "label", "bounds": { "x": 381, "y": 262, "w": 262, "h": 56 } }
+{ "id": "0/1/0", "mark": 4, "type": "LabelImpl", "role": "label", "bounds": { "x": 829, "y": 502, "w": 262, "h": 56 } }
 ```
 
 Or look up a node's region by id:
@@ -167,12 +167,12 @@ dali-ui-preview-cli samples/hello-dali.preview.dali.cpp --format tree
 ```
 
 ```text
-Layer "RootLayer" #1  [0]  (1024x600 @ 0,0)
-┠╴ CameraActor "" #2  [0/0]  (0x0 @ 0,0)
-┠╴ FlexLayoutImpl "" #3  [0/1]  (1024x600 @ 0,0)
-┃  ┠╴ LabelImpl "" #4  [0/1/0]  (262x56 @ 381,262)
-┃  ┖╴ LabelImpl "" #5  [0/1/1]  (522x22 @ 251,322)
-┖╴ CameraActor "" #6  [0/2]  (0x0 @ 0,0)
+Layer "RootLayer" #1  [0]  (1920x1080 @ 0,0)
+┠╴CameraActor "DefaultCamera" #2  [0/0]  (0x0 @ 960,540)
+┠╴FlexLayoutImpl "" #3  [0/1]  (1920x1080 @ 0,0)
+┃ ┠╴LabelImpl "" #4  [0/1/0]  (262x56 @ 829,502)
+┃ ┖╴LabelImpl "" #5  [0/1/1]  (346x20 @ 787,558)
+┖╴CameraActor "CaptureDefaultCamera" #6  [0/2]  (0x0 @ 960,540)
 ```
 
 The box-tree line shows the actor `name` (empty for labels); the displayed text lives in the JSON `text` field. `--format json` is the default.
@@ -240,7 +240,7 @@ You can verify either dimension alone (just `--baseline` for the image, just `--
 dali-ui-preview-cli samples/hello-dali.preview.dali.cpp --resolution 800x480 --theme light --dpr 2
 ```
 
-- `--resolution WxH` — logical render size (default `1024x600`).
+- `--resolution WxH` — logical render size (default `1920x1080`, the TV FHD profile).
 - `--theme dark|light` — background theme (default `dark`).
 - `--dpr N` — device-pixel ratio (default `1`); the actual render is `resolution × dpr` device pixels.
 
@@ -314,7 +314,7 @@ Every node in the tree has this shape (some fields are best-effort and may be ab
 The **root** node additionally carries `meta`:
 
 ```json
-"meta": { "resolution": { "w": 1024, "h": 600 }, "theme": "dark", "dpr": 1 }
+"meta": { "resolution": { "w": 1920, "h": 1080 }, "theme": "dark", "dpr": 1 }
 ```
 
 Note: DALi inserts internal `CameraActor` siblings (zero-area boxes); `--at`/`--node` ignore degenerate boxes, so cameras never match a pixel query.

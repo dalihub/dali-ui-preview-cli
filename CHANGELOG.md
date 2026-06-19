@@ -1,6 +1,15 @@
 # Changelog
 
-## Unreleased
+## [0.2.0] - 2026-06-19
+
+### Changed
+
+- **Default render resolution is now TV FHD (1920×1080)** — DALi UI apps target the
+  TV, so a bare render reflects the real device canvas. Override per render with
+  `--resolution WxH` (e.g. `--resolution 1024x600`) exactly as before.
+
+This release also tags the accumulated scene-tree / mapping / report / verify work
+below, previously unreleased since 0.1.0.
 
 ### Canonical scene tree (M1)
 

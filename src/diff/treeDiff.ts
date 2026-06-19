@@ -17,8 +17,8 @@
  * function of its two inputs — no fs, no process state.
  */
 
-import { MinimalNode } from './../treeModel';
-import { forEachNode } from './../treeQuery';
+import { MinimalNode } from '../treeModel';
+import { forEachNode } from '../treeQuery';
 
 /** A node that was added (in current, not target) or removed (in target, not current). */
 export interface TreeDiffNode {

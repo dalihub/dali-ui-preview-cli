@@ -4,7 +4,7 @@
  * Reads the real vendored template (server/preview_harness.cpp.template) via the
  * default path; no docker / network / rendering. Asserts the output is fully
  * substituted (no leftover {{...}}), embeds the user code, and carries the M0
- * fixed defaults (in-container paths + 1024/600 resolution).
+ * fixed defaults (in-container paths + 1920/1080 resolution).
  */
 
 import { expect } from 'chai';
@@ -29,13 +29,13 @@ describe('harnessTemplater.templateHarness', () => {
         expect(out).to.include('/work/tree.json');
     });
 
-    it('emits the default 1024x600 resolution as float literals', () => {
+    it('emits the default 1920x1080 resolution as float literals', () => {
         const out = templateHarness('return X;');
-        expect(out).to.include('1024');
-        expect(out).to.include('600');
+        expect(out).to.include('1920');
+        expect(out).to.include('1080');
         // Width/height are declared `static const float`, so emitted as `<n>.0f`.
-        expect(out).to.include('1024.0f');
-        expect(out).to.include('600.0f');
+        expect(out).to.include('1920.0f');
+        expect(out).to.include('1080.0f');
     });
 
     it('inserts user code containing $-patterns literally (no regex interpretation)', () => {

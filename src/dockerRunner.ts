@@ -38,9 +38,9 @@ const execFileAsync = promisify(execFile);
 export const DEFAULT_DOCKER_IMAGE = 'ghcr.io/lwc0917/dali-preview-runtime';
 export const DEFAULT_IMAGE_TAG = 'latest';
 
-/** M0 fixed render resolution defaults (mirrors harnessTemplater). */
-const DEFAULT_WIDTH = 1024;
-const DEFAULT_HEIGHT = 600;
+/** Render resolution defaults (mirrors harnessTemplater) — TV FHD. */
+const DEFAULT_WIDTH = 1920;
+const DEFAULT_HEIGHT = 1080;
 
 /** Hard timeout for the container render (compile + Xvfb + capture). */
 const DEFAULT_TIMEOUT_MS = 90_000;
@@ -84,9 +84,9 @@ export interface RenderOptions {
     image?: string;
     /** Image tag (default {@link DEFAULT_IMAGE_TAG}). */
     tag?: string;
-    /** Xvfb / capture width in px, passed via PREVIEW_WIDTH (default 1024). */
+    /** Xvfb / capture width in px, passed via PREVIEW_WIDTH (default 1920). */
     width?: number;
-    /** Xvfb / capture height in px, passed via PREVIEW_HEIGHT (default 600). */
+    /** Xvfb / capture height in px, passed via PREVIEW_HEIGHT (default 1080). */
     height?: number;
     /** Hard timeout in ms (default 90000). */
     timeoutMs?: number;
