@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.3.0] - 2026-06-23
+
+### Changed
+
+- **dali-ui non-fluent API migration.** dali-ui dropped the fluent chaining builder
+  API: setters now return `void` and `View::Children(...)` was renamed to
+  `View::AddChildren(...)`. The runtime image now tracks dali-ui **v2.5.26**
+  (`dali_2.5.26`), shared with the VS Code extension, so preview code uses the
+  non-fluent idiom — a named local, sequential setter statements, `AddChildren`
+  for children, then `return root;`.
+  - The bundled `samples/hello-dali.preview.dali.cpp` is rewritten in the
+    non-fluent idiom (renders identically).
+  - `transformVectorChildren` now rewrites the non-fluent
+    `view.AddChildren(vector)` statement form into an `.Add()` loop; the legacy
+    `return EXPR.Children(vector);` fluent form is still handled so pre-migration
+    snippets keep working.
+
 ## [0.2.0] - 2026-06-19
 
 ### Changed
