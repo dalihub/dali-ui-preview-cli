@@ -1,7 +1,7 @@
 /*
- * codeTransform.test.ts — emoji sanitize + vector→.Children, shared with the VS
+ * codeTransform.test.ts — emoji sanitize + vector→AddChildren, shared with the VS
  * Code extension. The CLI renders in the same docker image (DejaVu-only fonts,
- * View::Children initializer_list only), so these transforms must run before
+ * View::AddChildren initializer_list only), so these transforms must run before
  * templating. No docker / rendering here — pure string transforms.
  */
 
@@ -24,7 +24,18 @@ describe('codeTransform.sanitizeUnsupportedGlyphs', () => {
 });
 
 describe('codeTransform.transformVectorChildren', () => {
-    it('rewrites .Children(vector) into an .Add loop', () => {
+    it('rewrites non-fluent AddChildren(vector) statement into an .Add loop', () => {
+        const out = transformVectorChildren('    root.AddChildren(items);');
+        expect(out).to.include('for (auto& __ce : items) { root.Add(__ce); }');
+        expect(out).to.not.match(/AddChildren\(items\)/);
+    });
+
+    it('leaves init-list AddChildren({ ... }) untouched', () => {
+        const src = 'root.AddChildren({ title, subtitle });';
+        expect(transformVectorChildren(src)).to.equal(src);
+    });
+
+    it('rewrites legacy .Children(vector) into an .Add loop', () => {
         const out = transformVectorChildren('return StackLayout::New().SetSpacing(20).Children(rows);');
         expect(out).to.include('for (auto& __ce : rows)');
         expect(out).to.include('__cw.Add(__ce)');
