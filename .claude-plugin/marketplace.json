@@ -1,0 +1,21 @@
+{
+  "name": "dali-tools",
+  "description": "DALi UI tooling for AI coding agents — render DALi (Tizen) C++ UI to a PNG + JSON scene tree.",
+  "metadata": {
+    "description": "DALi UI tooling for AI coding agents — render DALi (Tizen) C++ UI to a PNG + JSON scene tree."
+  },
+  "owner": {
+    "name": "Woochan Lee",
+    "email": "lwcc0917@gmail.com"
+  },
+  "plugins": [
+    {
+      "name": "dali-ui-preview",
+      "source": "./",
+      "description": "Render DALi (Tizen) C++ UI code to a PNG + JSON scene tree, viewable inline by the agent (skill + MCP server over dali-ui-preview-cli).",
+      "version": "0.1.0",
+      "author": { "name": "Woochan Lee" },
+      "keywords": ["dali", "tizen", "ui-preview", "ai-agent", "mcp"]
+    }
+  ]
+}

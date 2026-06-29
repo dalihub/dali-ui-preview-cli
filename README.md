@@ -44,6 +44,27 @@ npm link
 
 All examples below use `dali-ui-preview-cli`; substitute `node out/cli.js` when running from a source checkout, or `npx dali-ui-preview-cli`.
 
+## Use it from an AI coding agent (Claude Code)
+
+The easiest way for a **coding agent to render your DALi code and see the result inline** is
+the bundled **Claude Code plugin** — it ships a *skill* (so the agent knows when/how to render)
+and an *MCP server* (so the rendered PNG comes back as an inline image, not just a file path).
+
+Install it in Claude Code (two commands):
+
+```
+/plugin marketplace add dalihub/dali-ui-preview-cli
+/plugin install dali-ui-preview@dali-tools
+```
+
+That's it — the agent can now call the **`render_dali_preview`** tool (returns the PNG **plus**
+the JSON scene tree) and **`dali_preview_setup`** (one-time: pull the runtime image). Requires
+**Docker** on the machine; the runtime image auto-pulls on first render.
+
+> Other agents / no plugin? The MCP server is just `npx -y dali-ui-preview-cli mcp` (stdio) —
+> add it to any MCP-capable client. Or skip MCP entirely and have the agent run the CLI and
+> Read the PNG (see [Quickstart](#quickstart)).
+
 ## Quickstart
 
 Render a preview file and print its scene tree:

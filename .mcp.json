@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "dali-ui-preview": {
+      "command": "npx",
+      "args": ["-y", "dali-ui-preview-cli", "mcp"]
+    }
+  }
+}

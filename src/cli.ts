@@ -1127,10 +1127,21 @@ async function main(argv: string[]): Promise<number> {
 // this module to exercise its pure helpers (e.g. mapRenderError) WITHOUT executing
 // the CLI and calling `process.exit`.
 if (require.main === module) {
-  main(process.argv.slice(2))
-    .then((code) => process.exit(code))
-    .catch((err) => {
-      console.error(`dali-ui-preview-cli: ${err instanceof Error ? err.message : String(err)}`);
+  if (process.argv[2] === 'mcp') {
+    // `dali-ui-preview-cli mcp` — start the long-lived MCP stdio server. Do NOT
+    // process.exit here: the stdio transport keeps the event loop alive until the
+    // MCP client disconnects. Lazy-required so the MCP SDK only loads in this mode.
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    require('./mcp').runMcpServer().catch((err: unknown) => {
+      console.error(`dali-ui-preview-cli mcp: ${err instanceof Error ? err.message : String(err)}`);
       process.exit(1);
     });
+  } else {
+    main(process.argv.slice(2))
+      .then((code) => process.exit(code))
+      .catch((err) => {
+        console.error(`dali-ui-preview-cli: ${err instanceof Error ? err.message : String(err)}`);
+        process.exit(1);
+      });
+  }
 }

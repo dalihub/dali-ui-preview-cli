@@ -2,27 +2,29 @@
 //
 // Welcome to DALi Preview! This is your first preview file.
 //
-// • Save (Ctrl+S) — the preview re-renders automatically
-// • Edit anything below the `return` statement and watch the preview update
-// • This file uses the `.preview.dali.cpp` naming convention so the
-//   extension recognises it as a preview source
+// dali-ui builder style (current API): declare a named local, call setters as
+// separate statements (setters return void — no method chaining), add children
+// with AddChildren({...}), then return the root.
 //
-// The preview canvas can be resized in the webview panel — the layout
-// recomputes for the new dimensions.
+// • Save (Ctrl+S) — the preview re-renders automatically
+// • Edit the statements below and watch the preview update
+// • The `.preview.dali.cpp` name marks this file as a preview source
 
-return FlexLayout::New()
-    .SetDirection(FlexDirection::COLUMN)
-    .SetAlignItems(FlexAlign::CENTER)
-    .SetJustifyContent(FlexJustify::CENTER)
-    .SetRequestedWidth(MATCH_PARENT)
-    .SetRequestedHeight(MATCH_PARENT)
-    .SetBackgroundColor(UiColor(0x1e1e2e))
-    .Children({
-        Label::New("Hello, Dali!")
-            .SetFontSize(48)
-            .SetTextColor(UiColor(0xFFFFFF)),
+FlexLayout root = FlexLayout::New();
+root.SetDirection(FlexDirection::COLUMN);
+root.SetAlignItems(FlexAlign::CENTER);
+root.SetJustifyContent(FlexJustify::CENTER);
+root.SetRequestedWidth(MATCH_PARENT);
+root.SetRequestedHeight(MATCH_PARENT);
+root.SetBackgroundColor(UiColor(0x1e1e2e));
 
-        Label::New("Edit this file to see the preview update")
-            .SetFontSize(18)
-            .SetTextColor(UiColor(0x888899)),
-    });
+Label title = Label::New("Hello, Dali!");
+title.SetFontSize(48);
+title.SetTextColor(UiColor(0xFFFFFF));
+
+Label subtitle = Label::New("Edit this file to see the preview update");
+subtitle.SetFontSize(18);
+subtitle.SetTextColor(UiColor(0x888899));
+
+root.AddChildren({ title, subtitle });
+return root;

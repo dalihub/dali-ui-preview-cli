@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.3.0] - 2026-06-29
+
+### Added
+
+- **MCP server mode (`dali-ui-preview-cli mcp`)** — a Model Context Protocol stdio server
+  exposing two tools so an AI coding agent can render and **see the result inline**:
+  - `render_dali_preview({ code | file, width?, height?, theme? })` — returns the rendered
+    PNG as an **image content block** plus the JSON scene tree.
+  - `dali_preview_setup({ tag? })` — one-time runtime image pull.
+- **Claude Code plugin** (`dali-ui-preview` in the `dali-tools` marketplace) bundling a
+  **skill** + the MCP server. Install with `/plugin marketplace add dalihub/dali-ui-preview-cli`
+  then `/plugin install dali-ui-preview@dali-tools`. See the README's
+  "Use it from an AI coding agent" section.
+
+### Fixed
+
+- **Sample `hello-dali.preview.dali.cpp` migrated to the current non-fluent dali-ui API**
+  (it used the removed fluent chaining / `.Children(...)` and no longer compiled). Now a
+  named-local + `AddChildren(...)` body, matching the runtime the shared Docker image ships.
+
 ## [0.2.0] - 2026-06-19
 
 ### Changed
