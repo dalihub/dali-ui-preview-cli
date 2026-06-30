@@ -14,6 +14,8 @@
     "!out/test/**",
     "server/",
     "samples/",
+    "templates/",
+    "skills/",
     "README.md",
     "CHANGELOG.md"
   ],
@@ -45,10 +47,8 @@
     "prepare": "npm run build"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.29.0",
     "pixelmatch": "^7.1.0",
-    "pngjs": "^7.0.0",
-    "zod": "^4.4.3"
+    "pngjs": "^7.0.0"
   },
   "devDependencies": {
     "@types/chai": "^4.3.0",

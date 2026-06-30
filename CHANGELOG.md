@@ -1,18 +1,17 @@
 # Changelog
 
-## [0.3.0] - 2026-06-29
+## [0.3.0] - 2026-06-30
 
 ### Added
 
-- **MCP server mode (`dali-ui-preview-cli mcp`)** — a Model Context Protocol stdio server
-  exposing two tools so an AI coding agent can render and **see the result inline**:
-  - `render_dali_preview({ code | file, width?, height?, theme? })` — returns the rendered
-    PNG as an **image content block** plus the JSON scene tree.
-  - `dali_preview_setup({ tag? })` — one-time runtime image pull.
-- **Claude Code plugin** (`dali-ui-preview` in the `dali-tools` marketplace) bundling a
-  **skill** + the MCP server. Install with `/plugin marketplace add dalihub/dali-ui-preview-cli`
-  then `/plugin install dali-ui-preview@dali-tools`. See the README's
-  "Use it from an AI coding agent" section.
+- **`dali-ui-preview-cli init`** — one-command project onboarding so a coding agent (Codex,
+  Cursor, Claude Code, …) verifies the DALi UI it writes in a **render → look → fix** loop. It
+  writes `AGENTS.md` (the verify-loop instruction, read by most agents) and
+  `.claude/skills/dali-preview/SKILL.md` (Claude Code auto-activates it), then verifies Docker,
+  pulls the runtime image, and smoke-renders a sample. Re-runnable (idempotent).
+- **`templates/agent-verification-loop.md`** — the drop-in `AGENTS.md`/`CLAUDE.md` instruction
+  `init` writes. Also installable globally in Claude Code as the **`dali-preview` skill** via the
+  `dali-tools` plugin marketplace. See the README's "Use it from an AI coding agent" section.
 
 ### Fixed
 

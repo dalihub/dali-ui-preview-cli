@@ -2,8 +2,8 @@
 
 > **Drop-in agent instructions.** Copy this block into your project's `AGENTS.md`
 > (Codex, Cursor, …) or `CLAUDE.md` (Claude Code) so the agent renders and checks
-> the DALi UI it writes — instead of guessing. (Claude Code users who installed the
-> `dali-ui-preview` plugin already get this via the bundled skill + MCP tool.)
+> the DALi UI it writes — instead of guessing. (`dali-ui-preview-cli init` writes this
+> for you; Claude Code users can instead install the bundled `dali-preview` skill.)
 
 ---
 

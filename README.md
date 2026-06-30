@@ -46,65 +46,57 @@ All examples below use `dali-ui-preview-cli`; substitute `node out/cli.js` when 
 
 ## Use it from an AI coding agent
 
-Goal: an agent, while writing DALi UI, **renders what it wrote, sees the result, and fixes
-it in a loop** — instead of guessing. There are two layers, and you only need to wire both
-once:
+Goal: while writing DALi UI, an agent **renders what it wrote, looks at it, and fixes it in a
+loop** — instead of guessing. You set this up **once per project**.
 
-1. **Tell the agent to verify** (the loop instruction) — a skill (Claude Code), or a drop-in
-   `AGENTS.md` / `CLAUDE.md` block (any agent).
-2. **Give it the tool** — the MCP server (typed tool + the PNG returned *inline*), runnable in
-   any MCP-capable agent as `npx -y dali-ui-preview-cli mcp` (a **local** stdio process — it
-   runs on your machine and shells out to your local Docker; nothing is hosted remotely).
+### One-command setup (recommended)
 
-**Prerequisite (all paths):** Docker installed on the machine. The runtime image (~290 MB)
-auto-pulls on the first render (or run `npx -y dali-ui-preview-cli --pull`).
+In your DALi project, run:
 
-> **No npm publish yet?** The **CLI / `AGENTS.md` path works today** via
-> `npx -y github:dalihub/dali-ui-preview-cli …` (it builds from source on first run). For the
-> **MCP server**, publishing to npm is recommended — a `github:` MCP command rebuilds on a cold
-> start, which can be slow enough to trip an MCP client's start-up timeout.
+```bash
+npx -y dali-ui-preview-cli init
+# before this package is published to npm, run it from GitHub:
+#   npx -y github:dalihub/dali-ui-preview-cli init
+```
 
-### Claude Code (turnkey — skill + MCP)
+`init` seeds the project so any agent picks it up automatically:
+- writes **`AGENTS.md`** — the verify-loop instruction, read by Codex, Cursor, Claude Code, …
+- writes **`.claude/skills/dali-preview/SKILL.md`** — Claude Code auto-activates it
+- verifies Docker, pulls the runtime image (~290 MB), and smoke-renders a sample
+
+From then on, when you (or your agent) write DALi UI in that project, the agent runs the CLI,
+**Reads the rendered PNG**, checks the scene tree, and fixes — no further setup.
+
+> **Prerequisite:** Docker installed on the machine. The agent can't install Docker itself
+> (that needs `sudo`), but it *can* pull the image and render once Docker is present. `init`
+> tells you if Docker is missing and still writes the instruction files.
+
+### Manual setup (no `init`)
+
+Copy [`templates/agent-verification-loop.md`](templates/agent-verification-loop.md) into your
+project's `AGENTS.md` (or `CLAUDE.md`). That's exactly what `init` writes.
+
+### Claude Code: install once for *all* projects (optional)
+
+Instead of per-project `init`, install the skill globally via the plugin:
 
 ```
 /plugin marketplace add dalihub/dali-ui-preview-cli
 /plugin install dali-ui-preview@dali-tools
 ```
 
-The agent now auto-uses the skill and can call **`render_dali_preview`** (PNG inline + scene
-tree) and **`dali_preview_setup`** (one-time image pull).
+The `dali-preview` skill then activates whenever you work on DALi UI, in any project.
 
-### Codex CLI (MCP)
+### What the agent actually runs
 
-Add to `~/.codex/config.toml` (or run `codex mcp add`):
+Under the hood it's just the CLI (see [Quickstart](#quickstart)) — no server, nothing hosted;
+the CLI shells out to your **local** Docker:
 
-```toml
-[mcp_servers.dali-ui-preview]
-command = "npx"
-args = ["-y", "dali-ui-preview-cli", "mcp"]
+```bash
+npx -y dali-ui-preview-cli <file-or-> --image .dali/preview.png   # stdout = scene tree, --image = PNG
 ```
 
-### Cursor / Windsurf / VS Code / Cline / Zed (MCP)
-
-Add the server to the client's MCP config:
-
-```json
-{
-  "mcpServers": {
-    "dali-ui-preview": { "command": "npx", "args": ["-y", "dali-ui-preview-cli", "mcp"] }
-  }
-}
-```
-
-### Any agent, no MCP (portable)
-
-Copy [`templates/agent-verification-loop.md`](templates/agent-verification-loop.md) into your
-**project's** `AGENTS.md` or `CLAUDE.md`. The agent then runs the CLI and Reads the PNG in its
-edit loop — no plugin or MCP needed (see [Quickstart](#quickstart) for the raw commands).
-
-> **Will the image show inline?** With MCP, the render comes back as an image block — Claude
-> Code/Desktop display it directly; some other clients surface text and you open the PNG. The
-> `AGENTS.md` path always works (the agent Reads the PNG file itself).
+…then it Reads `.dali/preview.png`.
 
 ## Quickstart
 

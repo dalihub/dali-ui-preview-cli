@@ -12,10 +12,10 @@
     {
       "name": "dali-ui-preview",
       "source": "./",
-      "description": "Render DALi (Tizen) C++ UI code to a PNG + JSON scene tree, viewable inline by the agent (skill + MCP server over dali-ui-preview-cli).",
+      "description": "The dali-preview skill — render DALi (Tizen) C++ UI to a PNG + JSON scene tree and verify it in your edit loop (via dali-ui-preview-cli).",
       "version": "0.1.0",
       "author": { "name": "Woochan Lee" },
-      "keywords": ["dali", "tizen", "ui-preview", "ai-agent", "mcp"]
+      "keywords": ["dali", "tizen", "ui-preview", "ai-agent", "skill"]
     }
   ]
 }
