@@ -266,7 +266,7 @@ dali-ui-preview-cli samples/hello-dali.preview.dali.cpp --watch
 
 ## 런타임 버전 (DALi 릴리스)
 
-렌더는 `ghcr.io/lwc0917/dali-preview-runtime`를 기준으로 실행됩니다. 이 이미지의 태그는 **DALi 릴리스**를 따라갑니다: 릴리스마다 `dali_<버전>` 태그 하나(예: `dali_2.5.18`)와, 굴러가는 `latest` 하나. 첫 렌더는 태그를 자동으로 받으며, 아래 명령들은 어떤 태그를 보유하고 사용할지를 관리합니다. 이미지와 캐시가 **VS Code 확장과 공유**되므로, 런타임을 한 번만 갱신하면 두 도구 모두에 적용됩니다.
+렌더는 `ghcr.io/lwc0917/dali-preview-runtime`를 기준으로 실행됩니다. 이 이미지의 태그는 **DALi 릴리스**를 따라갑니다: 릴리스마다 `dali_<버전>` 태그 하나(예: `dali_2.5.26`)와, 굴러가는 `latest` 하나. **`latest`는 현재 DALi `2.5.26`을 가리킵니다**(아래 API 노트가 가정하는 dali-ui 버전); 어떤 버전이 있고 지금 무엇을 쓰는지는 `--list-versions`가 권위 있는 실시간 출처입니다. 첫 렌더는 태그를 자동으로 받으며, 아래 명령들은 어떤 태그를 보유하고 사용할지를 관리합니다. 이미지와 캐시가 **VS Code 확장과 공유**되므로, 런타임을 한 번만 갱신하면 두 도구 모두에 적용됩니다.
 
 사용 가능한 버전(원격 레지스트리 ∪ 로컬 저장소)을 JSON으로 나열 — 렌더하지 **않으며**, 종료 코드 0:
 
@@ -280,7 +280,8 @@ dali-ui-preview-cli --list-versions
   "current": "latest",
   "versions": [
     { "tag": "latest", "local": true, "current": true },
-    { "tag": "dali_2.5.18", "local": false, "current": false }
+    { "tag": "dali_2.5.26", "local": true, "current": false },
+    { "tag": "dali_2.5.24", "local": false, "current": false }
   ]
 }
 ```
@@ -288,14 +289,20 @@ dali-ui-preview-cli --list-versions
 특정 태그를 미리 받아두기(기본값 `latest`); docker의 진행 상황은 stderr로 흐르고, 그다음 `{"pulled":"<ref>","ok":true}` 한 줄이 stdout으로:
 
 ```bash
-dali-ui-preview-cli --pull                 # :latest 받기
-dali-ui-preview-cli --pull dali_2.5.18      # 특정 DALi 릴리스 받기
+dali-ui-preview-cli --pull                  # :latest 받기
+dali-ui-preview-cli --pull dali_2.5.26      # 특정 DALi 릴리스 받기
 ```
 
-*이번* 렌더에서만 특정 DALi 버전으로 렌더하려면 `--image-tag`:
+**런타임 업데이트.** 태그는 한 번 받으면 **캐시**됩니다 — 렌더는 로컬 이미지를 재사용하고 다시 받지 **않습니다**(빠르고, 재현 가능). 따라서 새 런타임이 배포돼도(`latest`가 옮겨졌거나 새 `dali_*` 릴리스가 나와도) **자동으로 반영되지 않습니다** — 업그레이드하려면 명시적으로 받으세요. 그러면 이 CLI와 VS Code 확장이 모두 갱신된 이미지를 씁니다:
 
 ```bash
-dali-ui-preview-cli samples/hello-dali.preview.dali.cpp --image-tag dali_2.5.18
+dali-ui-preview-cli --pull                  # :latest를 최신 배포 런타임으로 갱신
+```
+
+*이번* 렌더에서만 특정 DALi 버전으로 렌더하려면 `--image-tag`(예: 오래된 릴리스로 재현):
+
+```bash
+dali-ui-preview-cli samples/hello-dali.preview.dali.cpp --image-tag dali_2.5.24
 ```
 
 고급: `--runtime-image <name>`은 이미지 이름 자체를 덮어씁니다(예: 사설 미러). `--list-versions` / `--pull`은 입력을 받지 않으며 렌더·대조 플래그와 함께 쓸 수 없습니다.
