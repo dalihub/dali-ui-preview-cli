@@ -43,6 +43,13 @@ export interface TemplateOptions {
      * comment (no-op).
      */
     fontSetup?: string;
+    /** Hoisted file-scope `#include` lines from the slice (default ''). Currently
+     *  always '' — the slicer inlines defs into `globals` rather than mounting
+     *  headers (ADR-006) — but the slot is filled for parity with the harness. */
+    includes?: string;
+    /** Cross-file helper/type/const definitions + weak stubs collected by the slice
+     *  builder, injected at file scope before `CreatePreviewUI()` (default ''). */
+    globals?: string;
     /** Absolute container path the harness writes the captured PNG to. */
     outputPath?: string;
     /** Absolute container path the harness writes the scene-tree JSON to. */
@@ -136,6 +143,8 @@ export function templateHarness(userCode: string, opts: TemplateOptions = {}): s
     out = fillPlaceholder(out, 'BACKGROUND_COLOR', backgroundColor);
     out = fillPlaceholder(out, 'OUTPUT_PATH', outputPath);
     out = fillPlaceholder(out, 'METADATA_PATH', metadataPath);
+    out = fillPlaceholder(out, 'USER_INCLUDES', opts.includes ?? '');
+    out = fillPlaceholder(out, 'USER_GLOBALS', opts.globals ?? '');
 
     // Safety net: a leftover placeholder would produce uncompilable C++.
     const leftover = out.match(/\{\{[A-Z_]+\}\}/);

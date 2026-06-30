@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.5.0] - 2026-06-30
+
+### Added
+
+- **Cross-file previews.** A preview can now USE helpers / types / consts defined in
+  *other* project files — `#include "widgets/card.h"` (relative path) and the CLI follows
+  your project-local includes (transitively), **inlines** their definitions into the render,
+  and renders. Ported from the VS Code extension's slice builder (`sliceBuilder` +
+  `sliceSources`, harness `{{USER_GLOBALS}}`/`{{USER_INCLUDES}}` slots).
+  - A referenced symbol the slice can't find gets a **weak placeholder** (grey View) so the
+    render still appears, rather than hard-failing.
+  - A compile error *inside* a collected helper surfaces as a real error pointing at **that
+    file** (not a misleading "X not declared" in the preview).
+  - Limits are documented in `templates/agent-verification-loop.md` / the skill so an agent
+    knows what's supported (header-inlinable, project-local) vs not (system/out-of-project
+    includes, separate-compilation linking). For full multi-file *app* preview, the VS Code
+    extension's slicer is more complete.
+
 ## [0.4.0] - 2026-06-30
 
 ### Added
