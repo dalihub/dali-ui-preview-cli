@@ -1,8 +1,18 @@
 # dali-ui-preview-cli
 
-Tizen DALi UI C++ 코드를 PNG **그리고** 구조화된 JSON 씬 트리(scene tree, 화면 요소들의 계층 구조)로 렌더링합니다 — AI 에이전트와 사람 모두를 위해 설계되었습니다.
+> **DALi(Tizen) UI C++ 코드를 진짜 PNG 스크린샷 + 구조화된 JSON 씬 트리로 렌더링 — 코딩 에이전트(또는 당신)가 UI를 *눈으로 보고* 루프로 고칠 수 있게.**
 
 [English](README.md) | **한국어**
+
+![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)
+![Built for AI agents](https://img.shields.io/badge/built%20for-AI%20coding%20agents-7c4dff.svg)
+![Platform: Linux](https://img.shields.io/badge/platform-Linux-555.svg)
+![Runtime: Docker](https://img.shields.io/badge/runtime-Docker-2496ed.svg)
+
+<p align="center">
+  <img src="docs/media/hero.gif" alt="C++로부터 렌더된 DALi UI — 대시보드, 사인인 카드, 재생 카드" width="900">
+  <br><sub>각 프레임은 작은 C++ 스니펫으로 CLI가 만든 실제 렌더입니다 — 기기도 에뮬레이터도 없이.</sub>
+</p>
 
 ## 무엇을 하나
 
