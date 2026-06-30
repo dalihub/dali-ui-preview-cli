@@ -343,7 +343,7 @@ dali-ui-preview-cli samples/hello-dali.preview.dali.cpp --image-tag dali_2.5.18
 - **결정론적입니다.** 같은 입력은 바이트 단위로 동일한 JSON을 렌더하므로, 트리 diff가 의미를 가지고 `--baseline-tree` 비교가 정확합니다.
 - **토큰 한도.** `--max-depth` / `--max-nodes`로 트리를 컨텍스트 창 안에 유지하세요.
 - **분기 가능한 종료 코드.** "도구가 실패"(1/10/11/12)와 "렌더는 됐지만 다름"(20)을 텍스트 파싱 없이 구분 — 작성→렌더→대조 루프에 이상적입니다.
-- **향후 선택지:** CLI를 MCP 서버(Claude/Cursor 같은 에이전트에 도구를 노출하는 프로세스)로 감싸면, 에이전트가 셸을 거치지 않고 `render_preview(code)`를 직접 호출할 수 있습니다.
+- **에이전트 온보딩 (한 줄):** DALi 프로젝트에서 `npx -y dali-ui-preview-cli init` (npm 퍼블리시 전에는 `npx -y github:dalihub/dali-ui-preview-cli init`) 을 한 번 실행하면 — `AGENTS.md`(검증-루프 지시문, Codex·Cursor·Claude Code 등이 읽음) + `.claude/skills/dali-preview/SKILL.md`(Claude 자동발동)를 심고, Docker 확인 + 런타임 이미지 pull + 샘플 1회 렌더로 준비를 끝냅니다. 이후 그 프로젝트에서 DALi UI를 작성하면 에이전트가 **렌더 → PNG 확인 → 수정** 루프를 돕니다. (Docker 엔진 설치만 사람 몫 — sudo 필요.) Claude Code에서 전역으로 쓰려면 `dali-tools` 마켓플레이스의 `dali-preview` 스킬을 설치하세요.
 
 ## 라이선스
 

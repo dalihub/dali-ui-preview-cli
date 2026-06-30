@@ -44,6 +44,50 @@ npm link
 
 All examples below use `dali-ui-preview-cli`; substitute `node out/cli.js` when running from a source checkout, or `npx dali-ui-preview-cli`.
 
+## Use it from an AI coding agent
+
+Goal: while writing DALi UI, an agent **renders what it wrote, looks at it, and fixes it in a
+loop** — instead of guessing. You set this up **once per project**.
+
+### One-command setup (recommended)
+
+In your DALi project, run:
+
+```bash
+npx -y dali-ui-preview-cli init
+# before this package is published to npm, run it from GitHub:
+#   npx -y github:dalihub/dali-ui-preview-cli init
+```
+
+`init` seeds the project so any agent picks it up automatically:
+- writes **`AGENTS.md`** — the verify-loop instruction, read by Codex, Cursor, Claude Code, …
+- writes **`.claude/skills/dali-preview/SKILL.md`** — Claude Code auto-activates it
+- verifies Docker, pulls the runtime image (~290 MB), and smoke-renders a sample
+
+From then on, when you (or your agent) write DALi UI in that project, the agent runs the CLI,
+**Reads the rendered PNG**, checks the scene tree, and fixes — no further setup.
+
+> **Prerequisite:** Docker installed on the machine. The agent can't install Docker itself
+> (that needs `sudo`), but it *can* pull the image and render once Docker is present. `init`
+> tells you if Docker is missing and still writes the instruction files.
+
+### Manual setup (no `init`)
+
+Copy [`templates/agent-verification-loop.md`](templates/agent-verification-loop.md) into your
+project's `AGENTS.md` (or `CLAUDE.md`). That's exactly what `init` writes.
+
+### Claude Code: install once for *all* projects (optional)
+
+Instead of per-project `init`, install the skill globally via the plugin:
+
+```
+/plugin marketplace add dalihub/dali-ui-preview-cli
+/plugin install dali-ui-preview@dali-tools
+```
+
+The `dali-preview` skill then activates whenever you work on DALi UI, in any project. No MCP,
+no server — the CLI shells out to your **local** Docker.
+
 ## Quickstart
 
 Render a preview file and print its scene tree:

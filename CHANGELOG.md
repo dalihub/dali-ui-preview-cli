@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.4.0] - 2026-06-30
+
+### Added
+
+- **`dali-ui-preview-cli init`** — one-command project onboarding so a coding agent (Codex,
+  Cursor, Claude Code, …) verifies the DALi UI it writes in a **render → look → fix** loop. It
+  writes `AGENTS.md` (the verify-loop instruction, read by most agents) and
+  `.claude/skills/dali-preview/SKILL.md` (Claude Code auto-activates it), then verifies Docker,
+  pulls the runtime image, and smoke-renders a sample. Re-runnable (idempotent).
+- **`templates/agent-verification-loop.md`** — the drop-in `AGENTS.md`/`CLAUDE.md` instruction
+  `init` writes. Also installable globally in Claude Code as the **`dali-preview` skill** via the
+  `dali-tools` plugin marketplace. See the README's "Use it from an AI coding agent" section.
+
+Validated end-to-end: a fresh agent, given only the init-seeded `AGENTS.md`, discovered the CLI,
+wrote DALi UI, fixed a compile error via the loop, and rendered correctly.
+
 ## [0.3.0] - 2026-06-23
 
 ### Changed
