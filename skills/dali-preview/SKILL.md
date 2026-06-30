@@ -56,3 +56,12 @@ return root;
 ```
 
 The OLD fluent style (`Type::New().SetX().SetY().Children({...})`) will **not** compile.
+
+**Building widgets / unknown names.** There's no special Button or TextField to learn —
+compose cards, fields, and buttons from `FlexLayout`/`View` panels (`SetCornerRadius`,
+`SetBackgroundColor`, `SetPadding`) with `Label` children. And don't guess exact enum/method
+names from memory: if unsure, just render — a `10` compile error names the exact symbol and
+line, which is faster to fix than reading SDK headers.
+
+**Output paths.** `--image`'s parent folder is auto-created; but if you redirect stdout into
+a new subfolder (`> out/tree.json`), `mkdir -p out` first.

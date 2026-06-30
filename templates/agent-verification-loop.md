@@ -32,8 +32,11 @@ edit loop:
   `npx -y dali-ui-preview-cli --pull`.
 
 ### Reading the result
-- **stdout** = the JSON scene tree (pipe-friendly; parse it directly).
-- **`--image <path>`** writes the rendered PNG — Read it to view the layout.
+- **stdout** = the JSON scene tree (pipe-friendly; parse it directly). If you redirect it
+  into a *new* subfolder (`> out/tree.json`), create that folder first (`mkdir -p out`) —
+  a shell `>` won't create it.
+- **`--image <path>`** writes the rendered PNG (its parent folder **is** auto-created) —
+  Read it to view the layout.
 - **exit codes**: `0` ok · `10` compile error in *your* code (stderr carries
   `{"phase":"compile","message":...,"sourceLine":N}` — fix that line) · `11` render
   error · `12` Docker unavailable (run `--pull`, or start Docker).
@@ -58,3 +61,12 @@ return root;
 ```
 
 The OLD fluent style (`Type::New().SetX().SetY().Children({...})`) will **not** compile.
+
+### Building common widgets, and unknown API names
+- There's no special Button/TextField you must learn — **compose** from `FlexLayout` / `View`
+  panels (`SetCornerRadius`, `SetBackgroundColor`, `SetPadding`, `SetRequestedWidth/Height`)
+  with `Label` children. A card, a field, and a button are each just "a coloured rounded
+  panel with a label inside."
+- **Don't guess exact enum/method names from memory.** If you're unsure (e.g. an alignment
+  value), just render — a `10` compile error names the exact symbol *and* the line. Fix and
+  re-render. That round-trip is faster than reading SDK headers.
