@@ -59,9 +59,18 @@ The OLD fluent style (`Type::New().SetX().SetY().Children({...})`) will **not** 
 
 **Building widgets / unknown names.** There's no special Button or TextField to learn —
 compose cards, fields, and buttons from `FlexLayout`/`View` panels (`SetCornerRadius`,
-`SetBackgroundColor`, `SetPadding`) with `Label` children. And don't guess exact enum/method
-names from memory: if unsure, just render — a `10` compile error names the exact symbol and
-line, which is faster to fix than reading SDK headers.
+`SetBackgroundColor`, `SetPadding`) with `Label` children. Easy-to-misguess types: padding is
+`SetPadding(Dali::Extents(left, right, top, bottom))` (no `UiPadding`); colours are
+`UiColor(0xRRGGBB)`. And don't guess exact enum/method names from memory: if unsure, just
+render — a `10` compile error names the exact symbol and line, faster than reading SDK headers.
+
+**Cross-file components.** To use a helper/type/const defined in another project file,
+`#include "path/to/it.h"` (relative path) at the top of the preview — the CLI follows
+project-local includes, **inlines** those definitions, and renders. Limits: only
+header-inlinable defs inside the project (folder with `.git`/`package.json`); a symbol it
+can't find becomes a **grey placeholder** (so a blank box means you forgot to `#include`
+it); errors *inside* a helper point at that file — fix them there; no separate-compilation
+linking. For full multi-file *app* preview, the VS Code extension's slicer is more complete.
 
 **Output paths.** `--image`'s parent folder is auto-created; but if you redirect stdout into
 a new subfolder (`> out/tree.json`), `mkdir -p out` first.

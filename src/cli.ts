@@ -29,6 +29,8 @@ import {
   DEFAULT_IMAGE_TAG,
 } from './dockerRunner';
 import { listVersions, pullImage } from './imageManager';
+import { buildSlice } from './sliceBuilder';
+import { resolveProjectIncludes } from './sliceSources';
 import { buildTree, MinimalNode } from './treeModel';
 import { parseGccErrors, formatRawError } from './errorParser';
 import { nodeAt, nodeById, toRegion } from './treeQuery';
@@ -662,18 +664,83 @@ function resolveImageRef(parsed: RenderArgs): ImageRef {
  * `renderInContainer` (the `PREVIEW_WIDTH/HEIGHT` env → Xvfb screen size). The
  * resolved `imageRef` selects which runtime image+tag the container runs.
  */
+/**
+ * Cross-file slice (ADR-006): when the input is a FILE, collect helper/type/const
+ * definitions from the project sources it `#include`s and inline them into the
+ * harness `globals` slot, so a preview that USES a component defined in another file
+ * still renders. Unresolved symbols get weak stubs (placeholder Views) so the render
+ * never hard-fails on a missing dependency. stdin/inline inputs have no project
+ * siblings, so they pass through unchanged.
+ */
+function computeSlice(resolved: ResolvedInput): { globals: string; body: string; heuristic: boolean; helperPaths: string[] } {
+  // Strip `#include` lines from the preview BODY: a body goes inside
+  // `CreatePreviewUI()`, where `#include` is invalid, and a project header
+  // ("card.h") isn't in the container anyway — its definitions are inlined into
+  // `globals` by the slice. System `<...>` come from the harness template. Blank
+  // the line (keep the newline) so source-line numbers stay aligned.
+  const stripIncludes = (s: string): string => s.replace(/^[ \t]*#include\b.*$/gm, '');
+  const body = stripIncludes(resolved.code);
+
+  const raw = resolved.sourcePath;
+  if (!raw || raw.startsWith('<')) {
+    return { globals: '', body, heuristic: false, helperPaths: [] };
+  }
+  // Normalize to an ABSOLUTE path: resolveProjectIncludes contains its reads to the
+  // project root, and `path.resolve(dir, "...")` of an include yields an absolute
+  // path — so a RELATIVE entry (`dali-ui-preview-cli foo.cpp` from the project dir)
+  // would fail the containment check and silently collect nothing. Resolving here
+  // makes cross-file work regardless of how the file path was passed.
+  const p = path.resolve(raw);
+  if (!fs.existsSync(p)) {
+    return { globals: '', body, heuristic: false, helperPaths: [] };
+  }
+  let fullText: string;
+  try {
+    fullText = fs.readFileSync(p, 'utf8');
+  } catch {
+    return { globals: '', body, heuristic: false, helperPaths: [] };
+  }
+  const extraSources = resolveProjectIncludes(p, fullText);
+  const slice = buildSlice(fullText, p, body, extraSources);
+  return slice.rung === 'heuristic'
+    ? { globals: slice.globals, body: slice.body, heuristic: true, helperPaths: slice.sourcePaths.slice(1) }
+    : { globals: '', body, heuristic: false, helperPaths: [] };
+}
+
 async function renderWithConfig(resolved: ResolvedInput, config: RenderConfig, imageRef: ImageRef) {
-  const source = templateHarness(resolved.code, {
-    width: config.deviceWidth,
-    height: config.deviceHeight,
-    backgroundColor: config.backgroundColor,
-  });
-  return renderInContainer(source, {
-    image: imageRef.image,
-    tag: imageRef.tag,
-    width: config.deviceWidth,
-    height: config.deviceHeight,
-  });
+  const slice = computeSlice(resolved);
+  const doRender = (globals: string, body: string) =>
+    renderInContainer(
+      templateHarness(body, {
+        width: config.deviceWidth,
+        height: config.deviceHeight,
+        backgroundColor: config.backgroundColor,
+        globals,
+      }),
+      {
+        image: imageRef.image,
+        tag: imageRef.tag,
+        width: config.deviceWidth,
+        height: config.deviceHeight,
+      },
+    );
+
+  if (slice.heuristic && slice.globals) {
+    try {
+      return await doRender(slice.globals, slice.body);
+    } catch (err) {
+      if (err instanceof RenderError && err.phase === 'compile') {
+        // If the compile error is INSIDE a collected helper file, that helper is
+        // the real problem — surface it (don't mask it with the fallback's
+        // misleading "X was not declared"). Otherwise the error is in the body or
+        // a weak stub: fall back to the plain body so the user sees their own error.
+        const inHelper = slice.helperPaths.some((sp) => err.stderr.includes(sp));
+        if (!inHelper) return await doRender('', slice.body);
+      }
+      throw err;
+    }
+  }
+  return doRender('', slice.body);
 }
 
 /**

@@ -20,6 +20,7 @@
 #include <locale>
 #include <string>
 #include <cmath>
+{{USER_INCLUDES}}
 
 using namespace Dali;
 using namespace Dali::Ui;
@@ -35,6 +36,9 @@ T __tag(T obj, const char* name)
     obj.SetProperty(Dali::Actor::Property::NAME, Dali::String(name));
     return obj;
 }
+
+// === Collected cross-file helper / type / const definitions (slice globals) ===
+{{USER_GLOBALS}}
 
 // === User preview code ===
 View CreatePreviewUI()
