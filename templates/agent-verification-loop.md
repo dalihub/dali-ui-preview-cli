@@ -67,6 +67,9 @@ The OLD fluent style (`Type::New().SetX().SetY().Children({...})`) will **not** 
   panels (`SetCornerRadius`, `SetBackgroundColor`, `SetPadding`, `SetRequestedWidth/Height`)
   with `Label` children. A card, a field, and a button are each just "a coloured rounded
   panel with a label inside."
+- A few exact types that are easy to guess wrong: padding/margins take **`Dali::Extents(left,
+  right, top, bottom)`** — e.g. `panel.SetPadding(Dali::Extents(24, 24, 16, 16));` (there is no
+  `UiPadding`). Colours are `UiColor(0xRRGGBB)`. Sizes use `MATCH_PARENT` / a float.
 - **Don't guess exact enum/method names from memory.** If you're unsure (e.g. an alignment
   value), just render — a `10` compile error names the exact symbol *and* the line. Fix and
   re-render. That round-trip is faster than reading SDK headers.
