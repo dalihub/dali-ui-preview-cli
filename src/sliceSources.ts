@@ -38,6 +38,9 @@ export function findProjectRoot(startDir: string): string {
  * @param entryText  Full text of the entry file.
  */
 export function resolveProjectIncludes(entryPath: string, entryText: string): SourceFile[] {
+  // Resolve to an absolute path: the containment guard below compares against the
+  // (absolute) project root, so a relative entry would otherwise collect nothing.
+  entryPath = path.resolve(entryPath);
   const sources: SourceFile[] = [];
   const root = findProjectRoot(path.dirname(entryPath));
   const seen = new Set<string>();

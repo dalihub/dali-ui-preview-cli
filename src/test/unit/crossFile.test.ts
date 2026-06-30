@@ -48,6 +48,19 @@ describe('cross-file slice', () => {
             const sources = resolveProjectIncludes(path.join(dir, 'e.cpp'), '#include <vector>\nreturn {};\n');
             expect(sources.length).to.equal(0);
         });
+
+        it('handles a RELATIVE entry path (regression: collects nothing if not resolved)', () => {
+            fs.writeFileSync(path.join(dir, 'card.h'), 'inline int MakeCard(){ return 1; }\n');
+            const prevCwd = process.cwd();
+            try {
+                process.chdir(dir);
+                const names = resolveProjectIncludes('screen.preview.dali.cpp', '#include "card.h"\nreturn MakeCard();\n')
+                    .map((s) => path.basename(s.path));
+                expect(names).to.include('card.h');
+            } finally {
+                process.chdir(prevCwd);
+            }
+        });
     });
 
     describe('buildSlice (cross-file)', () => {

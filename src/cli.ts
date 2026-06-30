@@ -681,8 +681,17 @@ function computeSlice(resolved: ResolvedInput): { globals: string; body: string;
   const stripIncludes = (s: string): string => s.replace(/^[ \t]*#include\b.*$/gm, '');
   const body = stripIncludes(resolved.code);
 
-  const p = resolved.sourcePath;
-  if (!p || p.startsWith('<') || !fs.existsSync(p)) {
+  const raw = resolved.sourcePath;
+  if (!raw || raw.startsWith('<')) {
+    return { globals: '', body, heuristic: false, helperPaths: [] };
+  }
+  // Normalize to an ABSOLUTE path: resolveProjectIncludes contains its reads to the
+  // project root, and `path.resolve(dir, "...")` of an include yields an absolute
+  // path — so a RELATIVE entry (`dali-ui-preview-cli foo.cpp` from the project dir)
+  // would fail the containment check and silently collect nothing. Resolving here
+  // makes cross-file work regardless of how the file path was passed.
+  const p = path.resolve(raw);
+  if (!fs.existsSync(p)) {
     return { globals: '', body, heuristic: false, helperPaths: [] };
   }
   let fullText: string;
