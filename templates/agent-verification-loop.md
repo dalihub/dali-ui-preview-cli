@@ -30,6 +30,11 @@ edit loop:
   Docker needs `sudo`, which you should not do silently.
 - The runtime image (~290 MB) **auto-pulls on the first render**, or pull it explicitly:
   `npx -y dali-ui-preview-cli --pull`.
+- **Runtime version.** The image tracks a **DALi release** (currently `dali-ui`
+  **2.5.26** — the API below targets that). `--list-versions` prints the exact
+  version in use and what's available; `--image-tag <dali_x.y.z>` pins a specific
+  release for one render. The image is **cached** once pulled, so a newer runtime is
+  *not* fetched automatically — run `--pull` to upgrade when one is published.
 
 ### Reading the result
 - **stdout** = the JSON scene tree (pipe-friendly; parse it directly). If you redirect it

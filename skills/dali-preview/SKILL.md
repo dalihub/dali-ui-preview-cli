@@ -26,6 +26,10 @@ look.** Use `dali-ui-preview-cli` as a verification tool in your edit loop.
 - **Docker** must be installed and usable. If it isn't, ask the human — installing Docker
   needs `sudo`, which you should not do silently.
 - The runtime image (~290 MB) **auto-pulls on the first render**, or: `npx -y dali-ui-preview-cli --pull`.
+- **Runtime version.** Tracks a DALi release (currently `dali-ui` **2.5.26** — the API here
+  targets it). `--list-versions` shows the exact/available versions; `--image-tag <dali_x.y.z>`
+  pins one for a render. The image is cached once pulled, so run `--pull` to upgrade when a
+  newer runtime is published (it isn't fetched automatically).
 
 ## Reading the result
 

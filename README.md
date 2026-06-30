@@ -319,7 +319,7 @@ dali-ui-preview-cli samples/hello-dali.preview.dali.cpp --watch
 
 ## Runtime versions (DALi releases)
 
-The render runs against `ghcr.io/lwc0917/dali-preview-runtime`. Its tags track **DALi releases**: one `dali_<version>` tag per release (e.g. `dali_2.5.18`) plus a rolling `latest`. The first render pulls a tag automatically; these commands manage which one you have and use. Because the image and caches are **shared with the VS Code extension**, updating the runtime once benefits both tools.
+The render runs against `ghcr.io/lwc0917/dali-preview-runtime`. Its tags track **DALi releases**: one `dali_<version>` tag per release (e.g. `dali_2.5.26`) plus a rolling `latest`. **`latest` currently tracks DALi `2.5.26`** (the dali-ui the API notes below assume); `--list-versions` is the authoritative, live source for which versions exist and which one you're on. The first render pulls a tag automatically; these commands manage which one you have and use. Because the image and caches are **shared with the VS Code extension**, updating the runtime once benefits both tools.
 
 List the available versions (remote registry ∪ your local store) as JSON — does **not** render, exit 0:
 
@@ -333,22 +333,29 @@ dali-ui-preview-cli --list-versions
   "current": "latest",
   "versions": [
     { "tag": "latest", "local": true, "current": true },
-    { "tag": "dali_2.5.18", "local": false, "current": false }
+    { "tag": "dali_2.5.26", "local": true, "current": false },
+    { "tag": "dali_2.5.24", "local": false, "current": false }
   ]
 }
 ```
 
-Pull a specific tag ahead of time (default `latest`); docker's progress streams to stderr, then a `{"pulled":"<ref>","ok":true}` line to stdout:
+Pull a tag ahead of time (default `latest`); docker's progress streams to stderr, then a `{"pulled":"<ref>","ok":true}` line to stdout:
 
 ```bash
-dali-ui-preview-cli --pull                 # pulls :latest
-dali-ui-preview-cli --pull dali_2.5.18      # pulls a specific DALi release
+dali-ui-preview-cli --pull                  # pulls :latest
+dali-ui-preview-cli --pull dali_2.5.26      # pulls a specific DALi release
 ```
 
-Render against a specific DALi version for *this* render with `--image-tag`:
+**Updating the runtime.** Once a tag is on disk it is **cached** — a render reuses the local image and does **not** re-fetch it (fast, and reproducible). So when a newer runtime is published (a moved `latest`, or a new `dali_*` release), it is **not** picked up automatically — pull it explicitly to upgrade, and both this CLI and the VS Code extension then use the refreshed image:
 
 ```bash
-dali-ui-preview-cli samples/hello-dali.preview.dali.cpp --image-tag dali_2.5.18
+dali-ui-preview-cli --pull                  # refresh :latest to the newest published runtime
+```
+
+Render against a specific DALi version for *this* render with `--image-tag` (e.g. to reproduce against an older release):
+
+```bash
+dali-ui-preview-cli samples/hello-dali.preview.dali.cpp --image-tag dali_2.5.24
 ```
 
 Advanced: `--runtime-image <name>` overrides the image name itself (e.g. a private mirror). `--list-versions` / `--pull` take no input and cannot be combined with render or verify flags.
