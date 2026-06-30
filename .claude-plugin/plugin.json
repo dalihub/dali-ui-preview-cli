@@ -1,0 +1,11 @@
+{
+  "name": "dali-ui-preview",
+  "displayName": "DALi UI Preview",
+  "description": "The dali-preview skill: render DALi (Tizen) C++ UI to a PNG + JSON scene tree and verify it in your edit loop (via dali-ui-preview-cli).",
+  "version": "0.1.0",
+  "author": { "name": "Woochan Lee", "email": "lwcc0917@gmail.com" },
+  "homepage": "https://github.com/dalihub/dali-ui-preview-cli",
+  "repository": "https://github.com/dalihub/dali-ui-preview-cli",
+  "license": "Apache-2.0",
+  "keywords": ["dali", "tizen", "ui-preview", "render", "skill", "ai-agent"]
+}

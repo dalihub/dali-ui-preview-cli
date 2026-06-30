@@ -1,6 +1,6 @@
 {
   "name": "dali-ui-preview-cli",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "CLI that renders Tizen DALi UI C++ to a PNG and emits a JSON node tree for humans and AI agents.",
   "bin": {
     "dali-ui-preview-cli": "out/cli.js"
@@ -14,6 +14,8 @@
     "!out/test/**",
     "server/",
     "samples/",
+    "templates/",
+    "skills/",
     "README.md",
     "CHANGELOG.md"
   ],
