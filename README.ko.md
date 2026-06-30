@@ -10,8 +10,8 @@
 ![Runtime: Docker](https://img.shields.io/badge/runtime-Docker-2496ed.svg)
 
 <p align="center">
-  <img src="docs/media/hero.gif" alt="C++로부터 렌더된 DALi UI — 대시보드, 사인인 카드, 재생 카드" width="900">
-  <br><sub>각 프레임은 작은 C++ 스니펫으로 CLI가 만든 실제 렌더입니다 — 기기도 에뮬레이터도 없이.</sub>
+  <img src="docs/media/hero.gif" alt="C++로부터 렌더된 DALi UI — 크립토 대시보드, 피트니스 트래커, 뮤직 플레이어, 매출 분석 대시보드" width="900">
+  <br><sub>작은 C++ 스니펫으로 CLI가 만든 4개의 실제 렌더 — 기기도 에뮬레이터도 없이. 각각 재현 가능한 <a href="samples/showcase">샘플</a>입니다.</sub>
 </p>
 
 ## 무엇을 하나

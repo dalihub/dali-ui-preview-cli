@@ -10,8 +10,8 @@
 ![Runtime: Docker](https://img.shields.io/badge/runtime-Docker-2496ed.svg)
 
 <p align="center">
-  <img src="docs/media/hero.gif" alt="DALi UI rendered from C++ — a dashboard, a sign-in card, and a now-playing card" width="900">
-  <br><sub>Each frame is a real render the CLI produced from a small C++ snippet — no device, no emulator.</sub>
+  <img src="docs/media/hero.gif" alt="DALi UI rendered from C++ — a crypto dashboard, a fitness tracker, a music player, and a sales analytics dashboard" width="900">
+  <br><sub>Four real renders the CLI produced from small C++ snippets — no device, no emulator. Each one is a reproducible <a href="samples/showcase">sample</a>.</sub>
 </p>
 
 ## What it does
@@ -19,7 +19,7 @@
 Write a snippet of DALi (Tizen's Dynamic Animation Library) UI C++, and this CLI renders it headlessly inside a Docker container, then hands you back two things: a real **PNG screenshot** and a deterministic, machine-readable **UI scene tree** (every node's id, type, role, on-screen bounds, source line, and properties). You can then **verify** that render against a target image and/or tree and branch on the exit code. `stdout` is pure JSON, so it drops straight into an agent's parser.
 
 <p align="center">
-  <img src="docs/media/dashboard.png" alt="A dashboard rendered by the CLI from a DALi C++ snippet" width="760">
+  <img src="docs/media/dashboard.png" alt="A fintech portfolio dashboard rendered by the CLI from a DALi C++ snippet" width="820">
 </p>
 
 ## Why
@@ -199,8 +199,8 @@ dali-ui-preview-cli samples/hello-dali.preview.dali.cpp --overlay overlay.png
 You get `overlay.png` with boxes labelled `#1 Layer`, `#3 FlexLayoutImpl`, `#4 "Hello, Dali!"`, `#5` subtitle, etc. The JSON tree is still printed to stdout.
 
 <p align="center">
-  <img src="docs/media/overlay.png" alt="Set-of-Mark overlay — each node boxed and numbered to match its mark in the JSON tree" width="640">
-  <br><sub>Every node boxed + numbered so an agent can say "make box #7 bigger" and map it straight to the tree.</sub>
+  <img src="docs/media/overlay.png" alt="Set-of-Mark overlay on the crypto dashboard — every node boxed and numbered to match its mark in the JSON tree" width="760">
+  <br><sub>Every node boxed + numbered so an agent can point at one — "recolor #19", "enlarge #7" — and map it straight to the tree.</sub>
 </p>
 
 ### Locate a node — `--at` / `--node`
