@@ -23,13 +23,22 @@ look.** Use `dali-ui-preview-cli` as a verification tool in your edit loop.
 
 ## Setup (once)
 
-- **Docker** must be installed and usable. If it isn't, ask the human — installing Docker
-  needs `sudo`, which you should not do silently.
-- The runtime image (~290 MB) **auto-pulls on the first render**, or: `npx -y dali-ui-preview-cli --pull`.
-- **Runtime version.** Tracks a DALi release (currently `dali-ui` **2.5.26** — the API here
-  targets it). `--list-versions` shows the exact/available versions; `--image-tag <dali_x.y.z>`
-  pins one for a render. The image is cached once pulled, so run `--pull` to upgrade when a
-  newer runtime is published (it isn't fetched automatically).
+There are **two runtimes** — pick one; **Docker is the default**:
+
+- **Docker (default, reproducible).** Docker must be installed and usable. If it isn't, ask
+  the human — installing Docker needs `sudo`, which you should not do silently. The runtime
+  image (~290 MB) **auto-pulls on the first render**, or: `npx -y dali-ui-preview-cli --pull`.
+  **Version** tracks a DALi release (currently `dali-ui` **2.5.26** — the API here targets it);
+  `--list-versions` shows exact/available versions, `--image-tag <dali_x.y.z>` pins one. The
+  image is cached, so run `--pull` to upgrade when a newer runtime is published.
+- **Local (native, no Docker).** For a host that already has a built DALi install plus
+  `g++`/`pkg-config`/`Xvfb`. Select it per render with `--runtime local` (or the `--local`
+  shorthand) and point at the install with `--dali-prefix <path>` — or set `DESKTOP_PREFIX` /
+  `DALI_PREVIEW_PREFIX`. Run `dali-ui-preview-cli init` once to **detect and persist** the
+  choice into `.dali/config.json`, after which a bare render uses it with no flag. Caveats:
+  fidelity depends on *your* DALi build + host fonts (CJK may render as boxes without
+  `fonts-noto-cjk`), and `--baseline` pixel checks are runtime-specific (don't compare a
+  local baseline against a docker render). `--list-versions`/`--pull` are Docker-only.
 
 ## Reading the result
 
@@ -37,7 +46,9 @@ look.** Use `dali-ui-preview-cli` as a verification tool in your edit loop.
 - **`--image <path>`** writes the rendered PNG — Read it to view the layout.
 - **exit codes**: `0` ok · `10` compile error in *your* code (stderr carries
   `{"phase":"compile","message":...,"sourceLine":N}` — fix that line) · `11` render error ·
-  `12` Docker unavailable (run `--pull`, or start Docker).
+  `12` Docker unavailable (run `--pull`, or start Docker) · `13` local runtime unavailable
+  (missing DALi prefix / `g++` / `Xvfb` / `pkg-config` — the stderr message says which; pass
+  `--dali-prefix`, set `DESKTOP_PREFIX`, or install the tool).
 
 ## Writing DALi UI that compiles (current dali-ui API)
 
