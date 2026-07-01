@@ -74,8 +74,8 @@ npx dali-ui-preview-cli <input.cpp> --image out.png
 Or from source:
 
 ```bash
-git clone https://github.com/lwc0917/dali-ui-preview
-cd dali-ui-preview
+git clone https://github.com/dalihub/dali-ui-preview-cli
+cd dali-ui-preview-cli
 npm install
 npm run build
 node out/cli.js <input.cpp>
@@ -131,6 +131,33 @@ Instead of per-project `init`, install the skill globally via the plugin:
 
 The `dali-preview` skill then activates whenever you work on DALi UI, in any project. No MCP,
 no server — the CLI shells out to your **local** Docker.
+
+### Check the environment (preflight)
+
+Before rendering, an agent should ask **"is a runtime ready?"** rather than find out by a
+failed render. `doctor` answers that as one JSON line — **no network** (Docker daemon check +
+local image-tag lookup + filesystem checks only):
+
+```bash
+dali-ui-preview-cli doctor
+```
+```json
+{"schemaVersion":1,"ready":true,"recommended":"docker","configured":null,
+ "runtimes":{
+   "docker":{"available":true,"imagePulled":true,"image":"ghcr.io/lwc0917/dali-preview-runtime:latest","issues":[]},
+   "local":{"available":false,"prefix":null,"issues":["No DALi install found. Pass --dali-prefix <path>, set DESKTOP_PREFIX, or run `init`."]}}}
+```
+
+- `ready` — at least one runtime is usable now; render with **`recommended`** (the runtime a
+  no-flag render will succeed with: the persisted `configured` choice if usable, else Docker,
+  else local).
+- Each runtime's **`issues`** are actionable strings to relay verbatim to the human — the fixes
+  need `sudo`, so an agent should surface them, not run them.
+- `docker.imagePulled:false` (with `available:true`) still renders; the first render pulls the
+  ~290 MB image once.
+- **Exit `0` when ready, `13` when no runtime is usable** — so a script/agent can gate work with
+  `dali-ui-preview-cli doctor && dali-ui-preview-cli app.cpp --image out.png`. The JSON report is
+  printed on stdout in **both** cases.
 
 ## Quickstart
 
@@ -432,8 +459,10 @@ Note: DALi inserts internal `CameraActor` siblings (zero-area boxes); `--at`/`--
 | `10` | Compile error in your code. |
 | `11` | Render / capture error. |
 | `12` | Docker unavailable (the `docker info` preflight failed). |
-| `13` | Local runtime unavailable (`--runtime local` selected but a DALi prefix / `g++` / `Xvfb` / `pkg-config` is missing). |
+| `13` | No usable runtime — from a render: `--runtime local` was selected but a DALi prefix / `g++` / `Xvfb` / `pkg-config` is missing; from `doctor`: neither runtime is ready. |
 | `20` | Verify diff mismatch (rendered, but diverged from the baseline). |
+
+`doctor` exits `0` when a runtime is ready and `13` when none is (its JSON report prints on stdout either way).
 
 On a compile/render failure, a structured `{ "phase", "message", "sourceLine" }` JSON is printed to **stderr** (stdout stays empty), e.g.:
 
@@ -443,11 +472,12 @@ On a compile/render failure, a structured `{ "phase", "message", "sourceLine" }`
 
 ## For AI agents
 
-- **stdout is the machine contract.** A bare render prints the full tree JSON; `--format tree` prints a box-tree; `--at`/`--node` print one lookup object; verify mode prints one verdict object; `--list-versions`/`--pull` print one management object. Exactly one emission per invocation.
+- **stdout is the machine contract.** A bare render prints the full tree JSON; `--format tree` prints a box-tree; `--at`/`--node` print one lookup object; verify mode prints one verdict object; `--list-versions`/`--pull` print one management object; `doctor` prints one readiness report. Exactly one emission per invocation.
+- **Preflight before rendering.** Run `doctor` first to learn whether a runtime is ready and which one a bare render will use — instead of discovering it by an exit-12/13 render failure. `ready:false` → relay its `issues` to the human and stop retrying.
 - **stderr is for diagnostics**, including the structured compile/render error `{phase, message, sourceLine}`. Parse stdout, watch the exit code, read stderr only on failure.
 - **Deterministic.** The same input renders byte-identical JSON, so tree diffs are meaningful and a `--baseline-tree` comparison is exact.
 - **Token caps.** Use `--max-depth` / `--max-nodes` to keep the tree within a context window.
-- **Branchable exit codes.** Distinguish "tool failed" (1/10/11/12) from "rendered but differs" (20) without parsing any text — ideal for the write→render→verify loop.
+- **Branchable exit codes.** Distinguish "tool failed" (1/10/11/12/13) from "rendered but differs" (20) without parsing any text — ideal for the write→render→verify loop; `doctor && render` gates on a ready environment.
 - **Future option:** wrap the CLI as an MCP server (a process that exposes tools to Claude/Cursor) so an agent can call `render_preview(code)` directly instead of shelling out.
 
 ## License

@@ -26,7 +26,19 @@ edit loop:
 4. If it's wrong, fix the code and go back to step 2. Repeat until it looks right.
 
 ### Setup (once)
-There are **two runtimes** — pick one; **Docker is the default**.
+**Before your first render, run the preflight** — don't discover a missing runtime
+mid-task:
+```bash
+npx -y dali-ui-preview-cli doctor   # one JSON line, no network; exit 0 ready / 13 none
+```
+It reports `{ready, recommended, configured, runtimes:{docker,local}}`. If `ready:true`,
+render with the `recommended` runtime. If `ready:false`, **relay each runtime's `issues`
+to the human and stop** — the fixes (install Docker, or a DALi prefix + `g++`/`Xvfb`) need
+`sudo`, which you must not run silently; retrying renders will just fail with exit 12/13.
+(`docker.imagePulled:false` with `available:true` still renders — the first render pulls
+the ~290 MB image once.) You can gate a render in a script with `doctor && render`.
+
+There are **two runtimes** — `doctor` reports both; **Docker is the default**.
 
 - **Docker (default, reproducible).** Docker must be installed and usable. If it isn't,
   ask the human — installing Docker needs `sudo`, which you should not do silently. The
@@ -51,9 +63,10 @@ There are **two runtimes** — pick one; **Docker is the default**.
   Read it to view the layout.
 - **exit codes**: `0` ok · `10` compile error in *your* code (stderr carries
   `{"phase":"compile","message":...,"sourceLine":N}` — fix that line) · `11` render
-  error · `12` Docker unavailable (run `--pull`, or start Docker) · `13` local runtime
-  unavailable (missing DALi prefix / `g++` / `Xvfb` / `pkg-config`; the stderr message
-  says which — pass `--dali-prefix`, set `DESKTOP_PREFIX`, or install the tool).
+  error · `12` Docker unavailable (run `--pull`, or start Docker) · `13` no usable runtime
+  (from a render: the selected local runtime is missing its DALi prefix / `g++` / `Xvfb` /
+  `pkg-config` — the stderr message says which; from `doctor`: neither runtime is ready —
+  read its `issues`). Pass `--dali-prefix`, set `DESKTOP_PREFIX`, or install the tool.
 
 ### Writing DALi UI that compiles (current dali-ui API)
 dali-ui is **non-fluent**: setters return `void`, so do **not** chain. Declare a named

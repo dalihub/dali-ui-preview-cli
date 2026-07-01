@@ -23,7 +23,30 @@ look.** Use `dali-ui-preview-cli` as a verification tool in your edit loop.
 
 ## Setup (once)
 
-There are **two runtimes** — pick one; **Docker is the default**:
+**Before your first render, run the preflight** so you don't discover a missing runtime
+mid-task:
+
+```bash
+npx -y dali-ui-preview-cli doctor
+```
+
+It prints one JSON line (no network) and exits `0` when a runtime is ready or `13` when
+none is — so you can gate a render with `doctor && render`:
+
+```json
+{"schemaVersion":1,"ready":true,"recommended":"docker","configured":null,
+ "runtimes":{"docker":{"available":true,"imagePulled":true,"image":"…:latest","issues":[]},
+             "local":{"available":false,"prefix":null,"issues":["No DALi install found. …"]}}}
+```
+
+- `ready:true` → render with the `recommended` runtime.
+- `ready:false` → **relay each runtime's `issues` to the human and stop** — the fixes
+  (install Docker, install a DALi prefix + `g++`/`Xvfb`) need `sudo`, which you must not run
+  silently. Don't keep retrying renders; they will just fail with exit 12/13.
+- `docker.imagePulled:false` (but `available:true`) → still renderable; the first render
+  pulls the ~290 MB image once — tell the human to expect that one-time wait.
+
+There are **two runtimes** — `doctor` reports both; **Docker is the default**:
 
 - **Docker (default, reproducible).** Docker must be installed and usable. If it isn't, ask
   the human — installing Docker needs `sudo`, which you should not do silently. The runtime
@@ -46,9 +69,10 @@ There are **two runtimes** — pick one; **Docker is the default**:
 - **`--image <path>`** writes the rendered PNG — Read it to view the layout.
 - **exit codes**: `0` ok · `10` compile error in *your* code (stderr carries
   `{"phase":"compile","message":...,"sourceLine":N}` — fix that line) · `11` render error ·
-  `12` Docker unavailable (run `--pull`, or start Docker) · `13` local runtime unavailable
-  (missing DALi prefix / `g++` / `Xvfb` / `pkg-config` — the stderr message says which; pass
-  `--dali-prefix`, set `DESKTOP_PREFIX`, or install the tool).
+  `12` Docker unavailable (run `--pull`, or start Docker) · `13` no usable runtime (from a
+  render: the selected local runtime is missing its DALi prefix / `g++` / `Xvfb` /
+  `pkg-config` — the stderr message says which; from `doctor`: neither runtime is ready —
+  read its `issues`). Pass `--dali-prefix`, set `DESKTOP_PREFIX`, or install the tool.
 
 ## Writing DALi UI that compiles (current dali-ui API)
 

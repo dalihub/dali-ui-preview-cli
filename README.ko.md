@@ -70,8 +70,8 @@ npx dali-ui-preview-cli <input.cpp> --image out.png
 또는 소스에서:
 
 ```bash
-git clone https://github.com/lwc0917/dali-ui-preview
-cd dali-ui-preview
+git clone https://github.com/dalihub/dali-ui-preview-cli
+cd dali-ui-preview-cli
 npm install
 npm run build
 node out/cli.js <input.cpp>
@@ -80,6 +80,30 @@ npm link
 ```
 
 아래 예시는 모두 `dali-ui-preview-cli`를 사용합니다. 소스 체크아웃에서 실행할 때는 `node out/cli.js`로, 또는 `npx dali-ui-preview-cli`로 바꾸세요.
+
+## 환경 점검 (프리플라이트)
+
+렌더하기 전에 에이전트는 **"런타임이 준비됐나?"**를 실패한 렌더로 알아내는 대신 먼저 물어야 합니다.
+`doctor`가 그 답을 JSON 한 줄로 줍니다 — **네트워크 없음**(Docker 데몬 확인 + 로컬 이미지 태그 조회 +
+파일시스템 확인만):
+
+```bash
+dali-ui-preview-cli doctor
+```
+```json
+{"schemaVersion":1,"ready":true,"recommended":"docker","configured":null,
+ "runtimes":{
+   "docker":{"available":true,"imagePulled":true,"image":"ghcr.io/lwc0917/dali-preview-runtime:latest","issues":[]},
+   "local":{"available":false,"prefix":null,"issues":["No DALi install found. Pass --dali-prefix <path>, set DESKTOP_PREFIX, or run `init`."]}}}
+```
+
+- `ready` — 지금 쓸 수 있는 런타임이 하나라도 있나. `recommended`(무플래그 렌더가 실제로 성공할 런타임 —
+  저장된 `configured`가 쓸 수 있으면 그것, 아니면 Docker, 아니면 로컬)로 렌더하세요.
+- 각 런타임의 **`issues`**는 사람에게 그대로 전달할 행동지시형 문자열입니다 — 고치려면 `sudo`가 필요하니
+  에이전트는 조용히 실행하지 말고 **사람에게 전달**하세요.
+- `docker.imagePulled:false`(단 `available:true`)여도 렌더는 됩니다 — 첫 렌더가 ~290MB 이미지를 한 번 받습니다.
+- **준비되면 exit `0`, 쓸 수 있는 런타임이 없으면 `13`** — 그래서 `doctor && render`로 게이트할 수 있고,
+  JSON 리포트는 **두 경우 다** stdout으로 나옵니다.
 
 ## 빠른 시작
 
@@ -376,8 +400,10 @@ dali-ui-preview-cli samples/hello-dali.preview.dali.cpp --image-tag dali_2.5.24
 | `10` | 코드의 컴파일 오류. |
 | `11` | 렌더 / 캡처 오류. |
 | `12` | Docker 사용 불가(`docker info` 사전 점검 실패). |
-| `13` | 로컬 런타임 사용 불가(`--runtime local`인데 DALi prefix / `g++` / `Xvfb` / `pkg-config` 누락). |
+| `13` | 쓸 수 있는 런타임 없음 — 렌더에서는: `--runtime local`인데 DALi prefix / `g++` / `Xvfb` / `pkg-config` 누락; `doctor`에서는: 두 런타임 모두 준비 안 됨. |
 | `20` | 대조 불일치(렌더는 됐지만 기준선과 어긋남). |
+
+`doctor`는 런타임이 준비되면 `0`, 없으면 `13`으로 종료합니다(JSON 리포트는 두 경우 다 stdout으로 출력).
 
 컴파일/렌더 실패 시, 구조화된 `{ "phase", "message", "sourceLine" }` JSON이 **stderr**로 출력됩니다(stdout은 비어 있음), 예:
 
@@ -387,7 +413,8 @@ dali-ui-preview-cli samples/hello-dali.preview.dali.cpp --image-tag dali_2.5.24
 
 ## AI 에이전트를 위해
 
-- **stdout이 기계 계약입니다.** 기본 렌더는 전체 트리 JSON을, `--format tree`는 박스 트리를, `--at`/`--node`는 조회 객체 하나를, 대조 모드는 판정 객체 하나를, `--list-versions`/`--pull`은 관리 객체 하나를 출력합니다. 호출당 정확히 한 번 출력.
+- **stdout이 기계 계약입니다.** 기본 렌더는 전체 트리 JSON을, `--format tree`는 박스 트리를, `--at`/`--node`는 조회 객체 하나를, 대조 모드는 판정 객체 하나를, `--list-versions`/`--pull`은 관리 객체 하나를, `doctor`는 준비 상태 리포트 하나를 출력합니다. 호출당 정확히 한 번 출력.
+- **렌더 전에 프리플라이트.** 먼저 `doctor`를 돌려 런타임이 준비됐는지·무플래그 렌더가 어느 것을 쓸지 확인하세요 — exit-12/13 렌더 실패로 뒤늦게 알아내는 대신. `ready:false`면 `issues`를 사람에게 전달하고 렌더 재시도를 멈추세요.
 - **stderr는 진단용**이며, 구조화된 컴파일/렌더 오류 `{phase, message, sourceLine}`도 여기로 갑니다. stdout을 파싱하고, 종료 코드를 지켜보며, 실패할 때만 stderr를 읽으세요.
 - **결정론적입니다.** 같은 입력은 바이트 단위로 동일한 JSON을 렌더하므로, 트리 diff가 의미를 가지고 `--baseline-tree` 비교가 정확합니다.
 - **토큰 한도.** `--max-depth` / `--max-nodes`로 트리를 컨텍스트 창 안에 유지하세요.
