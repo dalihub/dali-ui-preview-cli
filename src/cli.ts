@@ -117,6 +117,7 @@ const USAGE =
   '       dali-ui-preview-cli --list-versions                    (list runtime image versions as JSON; exit 0)\n' +
   '       dali-ui-preview-cli --pull [<tag>]                     (pull a runtime image tag, default latest)\n' +
   '       dali-ui-preview-cli init [<dir>]                       (set up a project so a coding agent verifies DALi UI in its loop)\n' +
+  '       dali-ui-preview-cli doctor                             (print an environment-readiness report as JSON; exit 0 ready / 13 no runtime)\n' +
   '   (or --version | --help)\n' +
   '\n' +
   'Reads preview code from a file, from STDIN (a `-` positional or a piped\n' +
@@ -137,6 +138,11 @@ const USAGE =
   'picks the background color (default dark); --dpr N (default 1) multiplies the render\n' +
   'dimensions by N device pixels. The effective {resolution,theme,dpr} are echoed on the\n' +
   'stdout tree as root.meta.\n' +
+  '\n' +
+  'Run `doctor` BEFORE rendering to check the environment: it prints\n' +
+  '{schemaVersion,ready,recommended,configured,runtimes:{docker,local}} JSON to stdout\n' +
+  '(no network) and exits 0 when a runtime is ready or 13 when none is — so you can gate\n' +
+  'a render with `doctor && render`. Each runtime carries actionable `issues` to relay.\n' +
   '\n' +
   'Runtime versions track DALi releases (e.g. dali_2.5.18), plus the rolling `latest`.\n' +
   '--list-versions prints the available runtime image versions (remote ∪ local, each\n' +
@@ -1268,6 +1274,15 @@ async function main(argv: string[]): Promise<number> {
   if (argv[0] === 'init') {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     return require('./init').runInit(argv.slice(1));
+  }
+
+  // `doctor` — machine-readable environment preflight: print a readiness report
+  // (which runtimes are usable, which a bare render will pick) as one JSON line so
+  // an agent can check BEFORE rendering instead of hitting an exit-12/13 failure.
+  // Exit 0 ready / 13 no runtime usable. Lazy-required (only when used).
+  if (argv[0] === 'doctor') {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    return require('./doctor').runDoctor(argv.slice(1));
   }
 
   // A bare invocation (no args) is only a usage request when stdin is an
