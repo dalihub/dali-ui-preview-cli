@@ -19,15 +19,16 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { resolveInput, resolveFromCode, resolveFromStdin, ResolvedInput } from './inputResolver';
-import { templateHarness, userCodeOffset, THEME_BACKGROUND } from './harnessTemplater';
+import { userCodeOffset, THEME_BACKGROUND } from './harnessTemplater';
 import {
-  renderInContainer,
   cleanupWorkDir,
   RenderError,
   isDockerAvailable,
   DEFAULT_DOCKER_IMAGE,
   DEFAULT_IMAGE_TAG,
 } from './dockerRunner';
+import { render, resolveRuntimeMode, RuntimeMode } from './render';
+import { checkLocalReadiness } from './runtime/localRunner';
 import { listVersions, pullImage } from './imageManager';
 import { buildSlice } from './sliceBuilder';
 import { resolveProjectIncludes } from './sliceSources';
@@ -60,6 +61,8 @@ const EXIT = {
   RENDER_ERROR: 11,
   /** Docker unavailable (the `docker info` preflight failed). */
   DOCKER_UNAVAILABLE: 12,
+  /** Selected local runtime unavailable (missing DALi prefix / g++ / Xvfb / pkg-config). */
+  RUNTIME_UNAVAILABLE: 13,
   /** Diff mismatch — the verify verdict diverged (M4; set by verdictExitCode). */
   DIFF_MISMATCH: 20,
 } as const;
@@ -108,6 +111,9 @@ const USAGE =
   '       dali-ui-preview-cli <input.cpp> --dpr N                (device-pixel ratio, default 1)\n' +
   '       dali-ui-preview-cli <input.cpp> --image-tag <tag>      (runtime image tag for THIS render, default latest)\n' +
   '       dali-ui-preview-cli <input.cpp> --image <name>         (override the runtime image name; advanced)\n' +
+  '       dali-ui-preview-cli <input.cpp> --runtime docker|local (render backend; default docker)\n' +
+  '       dali-ui-preview-cli <input.cpp> --local                (shorthand for --runtime local)\n' +
+  '       dali-ui-preview-cli <input.cpp> --dali-prefix <path>   (native DALi install for --runtime local)\n' +
   '       dali-ui-preview-cli --list-versions                    (list runtime image versions as JSON; exit 0)\n' +
   '       dali-ui-preview-cli --pull [<tag>]                     (pull a runtime image tag, default latest)\n' +
   '       dali-ui-preview-cli init [<dir>]                       (set up a project so a coding agent verifies DALi UI in its loop)\n' +
@@ -210,6 +216,10 @@ export interface RenderArgs {
   listVersions?: boolean;
   /** `--pull [<tag>]`: pull a runtime image tag; does NOT render. `''` means the default tag. */
   pull?: { tag?: string };
+  /** Runtime backend from `--runtime docker|local` / `--local`. Undefined = resolve from env/config/default. */
+  runtime?: RuntimeMode;
+  /** Native DALi install prefix from `--dali-prefix <path>` (used only in local mode). */
+  daliPrefix?: string;
 }
 
 /**
@@ -287,7 +297,7 @@ function parseDprFlag(value: string | undefined): number {
  * source was supplied at all is decided in {@link runRender} (which also considers
  * piped stdin), so a bare `dali-ui-preview-cli` with a pipe is valid.
  */
-function parseRenderArgs(argv: string[]): RenderArgs {
+export function parseRenderArgs(argv: string[]): RenderArgs {
   let input: string | undefined;
   let code: string | undefined;
   let imageOut: string | undefined;
@@ -310,6 +320,8 @@ function parseRenderArgs(argv: string[]): RenderArgs {
   let image: string | undefined;
   let listVersions = false;
   let pull: { tag?: string } | undefined;
+  let runtime: RuntimeMode | undefined;
+  let daliPrefix: string | undefined;
 
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
@@ -460,6 +472,31 @@ function parseRenderArgs(argv: string[]): RenderArgs {
       }
       image = value;
       i++; // consume the value
+    } else if (arg === '--runtime') {
+      const value = argv[i + 1];
+      if (value !== 'docker' && value !== 'local') {
+        throw new Error("--runtime requires a value of 'docker' or 'local'.");
+      }
+      if (runtime !== undefined && runtime !== value) {
+        throw new Error('conflicting runtime: --runtime and --local disagree.');
+      }
+      runtime = value;
+      i++; // consume the value
+    } else if (arg === '--local') {
+      if (runtime === 'docker') {
+        throw new Error('conflicting runtime: --runtime docker and --local disagree.');
+      }
+      runtime = 'local';
+    } else if (arg === '--dali-prefix') {
+      const value = argv[i + 1];
+      if (value === undefined || value.startsWith('-')) {
+        throw new Error('--dali-prefix requires a path argument.');
+      }
+      if (daliPrefix !== undefined) {
+        throw new Error('--dali-prefix was specified more than once.');
+      }
+      daliPrefix = value;
+      i++; // consume the value
     } else if (arg === '--list-versions') {
       listVersions = true;
     } else if (arg === '--pull') {
@@ -564,7 +601,7 @@ function parseRenderArgs(argv: string[]): RenderArgs {
   return {
     input, code, imageOut, overlayOut, at, nodeId, format, reportOut, maxDepth, maxNodes, watch,
     baseline, baselineTree, updateBaseline, threshold, resolution, theme, dpr,
-    imageTag, image, listVersions, pull,
+    imageTag, image, listVersions, pull, runtime, daliPrefix,
   };
 }
 
@@ -707,21 +744,54 @@ function computeSlice(resolved: ResolvedInput): { globals: string; body: string;
     : { globals: '', body, heuristic: false, helperPaths: [] };
 }
 
-async function renderWithConfig(resolved: ResolvedInput, config: RenderConfig, imageRef: ImageRef) {
+/** Everything the render dispatcher needs, resolved once from parsed args + input. */
+interface RuntimeContext {
+  mode: RuntimeMode;
+  image: string;
+  tag: string;
+  daliPrefix?: string;
+  baseDir: string;
+}
+
+/**
+ * Resolve the runtime context for a render: the mode (flag → env → config →
+ * docker), the docker image coordinates, the optional native DALi prefix, and the
+ * base directory used to locate `.dali/config.json` and a native prefix (the input
+ * file's dir, or cwd for stdin/inline input).
+ */
+function resolveRuntimeContext(parsed: RenderArgs, resolved: ResolvedInput): RuntimeContext {
+  const baseDir = resolved.sourcePath && !resolved.sourcePath.startsWith('<')
+    ? path.dirname(path.resolve(resolved.sourcePath))
+    : process.cwd();
+  const ref = resolveImageRef(parsed);
+  return {
+    mode: resolveRuntimeMode({ flag: parsed.runtime, baseDir }),
+    image: ref.image,
+    tag: ref.tag,
+    daliPrefix: parsed.daliPrefix,
+    baseDir,
+  };
+}
+
+async function renderWithConfig(resolved: ResolvedInput, config: RenderConfig, ctx: RuntimeContext) {
   const slice = computeSlice(resolved);
   const doRender = (globals: string, body: string) =>
-    renderInContainer(
-      templateHarness(body, {
+    render(
+      ctx.mode,
+      body,
+      {
         width: config.deviceWidth,
         height: config.deviceHeight,
         backgroundColor: config.backgroundColor,
         globals,
-      }),
+      },
       {
-        image: imageRef.image,
-        tag: imageRef.tag,
+        image: ctx.image,
+        tag: ctx.tag,
         width: config.deviceWidth,
         height: config.deviceHeight,
+        daliPrefix: ctx.daliPrefix,
+        baseDir: ctx.baseDir,
       },
     );
 
@@ -804,7 +874,7 @@ async function renderAndEmit(parsed: RenderArgs, resolved: ResolvedInput): Promi
   let workDir: string | undefined;
   try {
     const config = resolveRenderConfig(parsed);
-    const result = await renderWithConfig(resolved, config, resolveImageRef(parsed));
+    const result = await renderWithConfig(resolved, config, resolveRuntimeContext(parsed, resolved));
     workDir = result.workDir;
 
     // Build the annotated canonical tree (now carrying the M2 `mark`). This is the
@@ -889,7 +959,7 @@ async function runVerifyOrUpdate(parsed: RenderArgs, resolved: ResolvedInput): P
   let workDir: string | undefined;
   try {
     const config = resolveRenderConfig(parsed);
-    const result = await renderWithConfig(resolved, config, resolveImageRef(parsed));
+    const result = await renderWithConfig(resolved, config, resolveRuntimeContext(parsed, resolved));
     workDir = result.workDir;
 
     const tree = attachMeta(
@@ -1047,7 +1117,7 @@ export function mapRenderError(err: RenderError, resolved: ResolvedInput): Struc
  *   - the docker-unavailable preflight Error → return 12;
  *   - any other Error (IO, bad metadata, …) → the pre-M5 plain stderr line + 1.
  */
-function handleRenderFailure(err: unknown, resolved: ResolvedInput): number {
+async function handleRenderFailure(err: unknown, resolved: ResolvedInput): Promise<number> {
   if (err instanceof RenderError) {
     const structured = mapRenderError(err, resolved);
     // The structured error is the machine contract on the failure path: emit it as
@@ -1056,11 +1126,27 @@ function handleRenderFailure(err: unknown, resolved: ResolvedInput): number {
     return structured.phase === 'compile' ? EXIT.COMPILE_ERROR : EXIT.RENDER_ERROR;
   }
   const message = err instanceof Error ? err.message : String(err);
+  // The native runner throws this exact plain Error when the selected local runtime
+  // is missing its deps/prefix — a distinct, documented failure class (exit 13),
+  // kept separate from a docker-unavailable (12) so a script can branch on it.
+  if (/^Local DALi runtime is not available:/.test(message)) {
+    console.error(`dali-ui-preview-cli: ${message}`);
+    return EXIT.RUNTIME_UNAVAILABLE;
+  }
   // The `docker info` preflight (dockerRunner) throws this exact plain Error; it is
   // a distinct, documented failure class (exit 12), kept separate from a usage (1)
   // or a compile/render (10/11) failure so a script can branch on it.
   if (/^Docker is not available:/.test(message)) {
     console.error(`dali-ui-preview-cli: ${message}`);
+    // Helpful nudge: if the host has a ready native runtime, point the user at it
+    // instead of leaving them stuck on a missing Docker daemon.
+    const baseDir = resolved.sourcePath && !resolved.sourcePath.startsWith('<')
+      ? path.dirname(path.resolve(resolved.sourcePath))
+      : process.cwd();
+    const local = checkLocalReadiness({ baseDir });
+    if (local.ready && local.prefix) {
+      console.error(`dali-ui-preview-cli: a local DALi runtime looks ready at ${local.prefix} — retry with \`--runtime local\`.`);
+    }
     return EXIT.DOCKER_UNAVAILABLE;
   }
   console.error(`dali-ui-preview-cli: ${message}`);
@@ -1132,7 +1218,7 @@ async function runRender(argv: string[]): Promise<number> {
     try {
       return await runVerifyOrUpdate(parsed, resolved);
     } catch (err) {
-      return handleRenderFailure(err, resolved);
+      return await handleRenderFailure(err, resolved);
     }
   }
 
@@ -1153,7 +1239,7 @@ async function runRender(argv: string[]): Promise<number> {
       });
       return 0;
     } catch (err) {
-      return handleRenderFailure(err, resolved);
+      return await handleRenderFailure(err, resolved);
     }
   }
 
@@ -1162,7 +1248,7 @@ async function runRender(argv: string[]): Promise<number> {
     await renderAndEmit(parsed, resolved);
     return EXIT.OK;
   } catch (err) {
-    return handleRenderFailure(err, resolved);
+    return await handleRenderFailure(err, resolved);
   }
 }
 
