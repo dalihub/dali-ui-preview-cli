@@ -49,4 +49,24 @@ if(red<1000){console.error("staged image did not render (red_pixels="+red+")");p
 console.log("  ✓ relative-path image rendered (red_pixels="+red+")");
 ' "$TMP/img.png" || fail "image asset was not staged/rendered"
 
-echo "E2E PASS ($MODE): ${#SAMPLES[@]} sample(s) + image staging"
+# Broken-image placeholder: an ImageView with an UNRESOLVABLE URL must render the
+# gray placeholder (not an empty frame) so the layout is preserved.
+echo "· broken-image placeholder [$MODE]"
+cat > "$TMP/imgproj/broken.preview.dali.cpp" <<'EOF'
+ImageView pic = ImageView::New("assets/does_not_exist.png");
+pic.SetRequestedWidth(1200.0f);
+pic.SetRequestedHeight(1000.0f);
+return pic;
+EOF
+node "$CLI" "$TMP/imgproj/broken.preview.dali.cpp" --runtime "$MODE" --image "$TMP/broken.png" >/dev/null 2>"$TMP/brerr.txt" \
+  || { cat "$TMP/brerr.txt" >&2; fail "broken-image render non-zero exit"; }
+node -e '
+const fs=require("fs");const {PNG}=require("pngjs");
+const p=PNG.sync.read(fs.readFileSync(process.argv[1]));let gray=0;
+for(let i=0;i<p.data.length;i+=4){const R=p.data[i],G=p.data[i+1],B=p.data[i+2],A=p.data[i+3];
+  if(A>10 && R>40 && R<210 && Math.abs(R-G)<22 && Math.abs(G-B)<22 && Math.abs(R-B)<22)gray++;}
+if(gray<1000){console.error("broken-image placeholder did not render (gray_pixels="+gray+")");process.exit(8);}
+console.log("  ✓ broken-image placeholder rendered (gray_pixels="+gray+")");
+' "$TMP/broken.png" || fail "broken-image placeholder was not rendered"
+
+echo "E2E PASS ($MODE): ${#SAMPLES[@]} sample(s) + image staging + placeholder"

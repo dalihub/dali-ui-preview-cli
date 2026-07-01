@@ -36,7 +36,12 @@ export interface StageImageResult {
   code: string;
   /** How many distinct URLs were staged + rewritten. */
   staged: number;
+  /** How many image URLs the code referenced at all (staged + remote + unresolvable). */
+  referenced: number;
 }
+
+/** Bundled gray broken-image placeholder, shipped at `<package>/media/`. */
+const BROKEN_IMAGE_ASSET = 'broken-image-placeholder.png';
 
 /** True for `scheme://…` URLs (remote or custom) that can't be staged from disk. */
 function isRemoteScheme(url: string): boolean {
@@ -59,11 +64,14 @@ function resolveHostPath(url: string, sourceDir: string): string | undefined {
  */
 export function stageImageAssets(code: string, opts: StageImageOptions): StageImageResult {
   const rewrites = new Map<string, string>(); // original URL → in-binary path
+  const referenced = new Set<string>();       // every distinct image URL seen
   let m: RegExpExecArray | null;
   IMAGE_URL_RE.lastIndex = 0;
   while ((m = IMAGE_URL_RE.exec(code)) !== null) {
     const url = m[2];
-    if (!url || rewrites.has(url) || isRemoteScheme(url)) { continue; }
+    if (!url) { continue; }
+    referenced.add(url);
+    if (rewrites.has(url) || isRemoteScheme(url)) { continue; }
     const srcPath = resolveHostPath(url, opts.sourceDir);
     if (!srcPath) { continue; } // unresolvable → leave it (placeholder shows)
     try {
@@ -76,7 +84,7 @@ export function stageImageAssets(code: string, opts: StageImageOptions): StageIm
     }
   }
 
-  if (rewrites.size === 0) { return { code, staged: 0 }; }
+  if (rewrites.size === 0) { return { code, staged: 0, referenced: referenced.size }; }
 
   IMAGE_URL_RE.lastIndex = 0;
   const out = code.replace(IMAGE_URL_RE, (full, _call, url) => {
@@ -85,5 +93,27 @@ export function stageImageAssets(code: string, opts: StageImageOptions): StageIm
     // call name / parens / spacing.
     return staged ? full.replace(`"${url}"`, `"${staged}"`) : full;
   });
-  return { code: out, staged: rewrites.size };
+  return { code: out, staged: rewrites.size, referenced: referenced.size };
+}
+
+/**
+ * Stage the bundled gray broken-image placeholder into `workDir` and return the
+ * path the rendered binary should pass to `SetBrokenImageUrl` — `/work/<asset>`
+ * for docker (workDir is bind-mounted at /work), the staged host path for local.
+ * Returns undefined if the bundled asset is missing or the copy fails (the caller
+ * then omits SetBrokenImageUrl — graceful, byte-identical to the no-placeholder
+ * harness).
+ */
+export function stageBrokenImagePlaceholder(workDir: string, mode: 'docker' | 'local'): string | undefined {
+  // Compiled module lives at out/runtime/imageAssets.js, so the package root
+  // (which holds media/) is two directories up.
+  const src = path.join(__dirname, '..', '..', 'media', BROKEN_IMAGE_ASSET);
+  try {
+    if (!fs.existsSync(src)) { return undefined; }
+    const dst = path.join(workDir, BROKEN_IMAGE_ASSET);
+    fs.copyFileSync(src, dst);
+    return mode === 'docker' ? `/work/${BROKEN_IMAGE_ASSET}` : dst;
+  } catch {
+    return undefined;
+  }
 }

@@ -10,7 +10,7 @@ import { templateHarness } from './harnessTemplater';
 import { renderInContainerAt, RenderResult } from './dockerRunner';
 import { renderNatively, escapeCppString } from './runtime/localRunner';
 import { readConfig } from './runtime/config';
-import { stageImageAssets } from './runtime/imageAssets';
+import { stageImageAssets, stageBrokenImagePlaceholder } from './runtime/imageAssets';
 
 export type RuntimeMode = 'docker' | 'local';
 
@@ -60,16 +60,23 @@ export async function render(mode: RuntimeMode, userCode: string, t: DispatchTem
   // Stage local-file image assets into the workDir so relative/absolute image
   // URLs actually resolve at render time (docker: /work/<name>; local: host path).
   // A no-op when the code references no local images (byte-identical source).
-  const { code: stagedCode } = stageImageAssets(userCode, {
+  const { code: stagedCode, referenced } = stageImageAssets(userCode, {
     workDir,
     sourceDir: r.baseDir ?? process.cwd(),
     mode,
   });
 
+  // Only when the preview references images: stage the gray placeholder and
+  // register it via SetBrokenImageUrl, so an unresolvable/remote image renders
+  // the placeholder at its size instead of nothing. Image-free previews keep the
+  // byte-identical `UiConfig::New().Apply();` harness (brokenImageUrl stays undefined).
+  const brokenImageUrl = referenced > 0 ? stageBrokenImagePlaceholder(workDir, mode) : undefined;
+
   if (mode === 'local') {
     const source = templateHarness(stagedCode, {
       width: t.width, height: t.height, backgroundColor: t.backgroundColor, globals: t.globals,
       outputPath: escapeCppString(pngHost), metadataPath: escapeCppString(metaHost),
+      brokenImageUrl,
     });
     return renderNatively(source, workDir, pngHost, metaHost, {
       width: t.width, height: t.height, timeoutMs: r.timeoutMs, daliPrefix: r.daliPrefix, baseDir: r.baseDir,
@@ -80,6 +87,7 @@ export async function render(mode: RuntimeMode, userCode: string, t: DispatchTem
   const source = templateHarness(stagedCode, {
     width: t.width, height: t.height, backgroundColor: t.backgroundColor, globals: t.globals,
     outputPath: '/work/preview.png', metadataPath: '/work/tree.json',
+    brokenImageUrl,
   });
   return renderInContainerAt(source, workDir, {
     image: r.image, tag: r.tag, width: r.width, height: r.height, timeoutMs: r.timeoutMs,
