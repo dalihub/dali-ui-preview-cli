@@ -1,5 +1,29 @@
 # Changelog
 
+## [0.7.0] - 2026-07-01
+
+### Added
+
+- **`doctor` — machine-readable environment preflight.** Run `dali-ui-preview-cli doctor`
+  *before* rendering to learn whether a runtime is ready and which one a bare render will use,
+  instead of discovering it reactively via an exit-12/13 render failure. Prints one JSON line
+  to stdout — `{schemaVersion, ready, recommended, configured, runtimes:{docker, local}}` —
+  with **actionable `issues` strings** per runtime for an agent to relay to the human (the
+  fixes need `sudo`). **No network**: Docker daemon check + local `docker images` tag lookup +
+  filesystem readiness only, so it is cheap to run at the top of every session.
+  - **Exit `0` when a runtime is ready, `13` when none is** (shared "no usable runtime" meaning
+    with the render path), so a caller can gate work with `doctor && render`. The JSON report
+    prints on stdout in **both** cases (the report is the successful output of a diagnosis).
+  - `recommended` is availability-aware: the persisted `.dali/config.json` choice when usable,
+    else Docker, else local, else `null`. `docker.imagePulled:false` (with `available:true`) is
+    surfaced so an agent can warn about the one-time ~290 MB first-render pull.
+  - The readiness logic is a **pure** `buildDoctorReport` (unit-tested with a truth-table like
+    `chooseRuntime`); `runDoctor` is the thin async probe (`src/doctor.ts`).
+  - Honors `--dali-prefix` / `--image-tag` / `--runtime-image` (the overrides that change what a
+    render would probe); takes no input.
+  - The **SKILL / `AGENTS.md` verification-loop** instructions now tell agents to run `doctor`
+    first and to relay `issues` (not `sudo`-install silently) when `ready:false`.
+
 ## [0.6.0] - 2026-07-01
 
 ### Added
