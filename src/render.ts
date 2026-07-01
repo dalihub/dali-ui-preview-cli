@@ -10,6 +10,7 @@ import { templateHarness } from './harnessTemplater';
 import { renderInContainerAt, RenderResult } from './dockerRunner';
 import { renderNatively, escapeCppString } from './runtime/localRunner';
 import { readConfig } from './runtime/config';
+import { stageImageAssets } from './runtime/imageAssets';
 
 export type RuntimeMode = 'docker' | 'local';
 
@@ -56,8 +57,17 @@ export async function render(mode: RuntimeMode, userCode: string, t: DispatchTem
   const pngHost = path.join(workDir, 'preview.png');
   const metaHost = path.join(workDir, 'tree.json');
 
+  // Stage local-file image assets into the workDir so relative/absolute image
+  // URLs actually resolve at render time (docker: /work/<name>; local: host path).
+  // A no-op when the code references no local images (byte-identical source).
+  const { code: stagedCode } = stageImageAssets(userCode, {
+    workDir,
+    sourceDir: r.baseDir ?? process.cwd(),
+    mode,
+  });
+
   if (mode === 'local') {
-    const source = templateHarness(userCode, {
+    const source = templateHarness(stagedCode, {
       width: t.width, height: t.height, backgroundColor: t.backgroundColor, globals: t.globals,
       outputPath: escapeCppString(pngHost), metadataPath: escapeCppString(metaHost),
     });
@@ -67,7 +77,7 @@ export async function render(mode: RuntimeMode, userCode: string, t: DispatchTem
   }
 
   // docker: harness bakes the container /work paths; workDir is bind-mounted at /work.
-  const source = templateHarness(userCode, {
+  const source = templateHarness(stagedCode, {
     width: t.width, height: t.height, backgroundColor: t.backgroundColor, globals: t.globals,
     outputPath: '/work/preview.png', metadataPath: '/work/tree.json',
   });

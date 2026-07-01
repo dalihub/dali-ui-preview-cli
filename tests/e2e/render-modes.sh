@@ -26,4 +26,27 @@ for sample in "${SAMPLES[@]}"; do
     || { cat "$TMP/err.txt" >&2; fail "non-zero exit for $(basename "$sample")"; }
   node "$ROOT/tests/e2e/assert-render.js" "$png" "$tree" || fail "assertion failed for $(basename "$sample")"
 done
-echo "E2E PASS ($MODE): ${#SAMPLES[@]} sample(s)"
+
+# Image-asset staging: a preview referencing a RELATIVE local image must actually
+# render the image (not a blank frame) in this runtime. A single ImageView is the
+# root so the check is independent of the container/View children API.
+echo "· image-asset staging [$MODE]"
+IMGDIR="$TMP/imgproj/assets"; mkdir -p "$IMGDIR"
+node -e 'const fs=require("fs");const {PNG}=require("pngjs");const p=new PNG({width:256,height:256});for(let i=0;i<p.data.length;i+=4){p.data[i]=255;p.data[i+3]=255;}fs.writeFileSync(process.argv[1],PNG.sync.write(p));' "$IMGDIR/red.png"
+cat > "$TMP/imgproj/img.preview.dali.cpp" <<'EOF'
+ImageView pic = ImageView::New("assets/red.png");
+pic.SetRequestedWidth(1200.0f);
+pic.SetRequestedHeight(1000.0f);
+return pic;
+EOF
+node "$CLI" "$TMP/imgproj/img.preview.dali.cpp" --runtime "$MODE" --image "$TMP/img.png" >/dev/null 2>"$TMP/imgerr.txt" \
+  || { cat "$TMP/imgerr.txt" >&2; fail "image-render non-zero exit"; }
+node -e '
+const fs=require("fs");const {PNG}=require("pngjs");
+const p=PNG.sync.read(fs.readFileSync(process.argv[1]));let red=0;
+for(let i=0;i<p.data.length;i+=4){if(p.data[i]>200&&p.data[i+1]<60&&p.data[i+2]<60)red++;}
+if(red<1000){console.error("staged image did not render (red_pixels="+red+")");process.exit(7);}
+console.log("  ✓ relative-path image rendered (red_pixels="+red+")");
+' "$TMP/img.png" || fail "image asset was not staged/rendered"
+
+echo "E2E PASS ($MODE): ${#SAMPLES[@]} sample(s) + image staging"
