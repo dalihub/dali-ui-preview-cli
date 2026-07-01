@@ -223,6 +223,25 @@ export async function renderInContainer(
     templatedSource: string,
     opts: RenderOptions = {},
 ): Promise<RenderResult> {
+    // Back-compat wrapper: create the temp workDir here, then delegate to the
+    // workDir-injected implementation. The render dispatcher (render.ts) calls
+    // renderInContainerAt directly with a workDir it owns.
+    const workDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dali-ui-preview-'));
+    return renderInContainerAt(templatedSource, workDir, opts);
+}
+
+/**
+ * Like {@link renderInContainer} but renders into a caller-provided `workDir`
+ * (already created). Used by the runtime dispatcher so it can bake the matching
+ * `/work/...` output paths into the harness before this runs. The workDir is
+ * bind-mounted at `/work`, so the container writes `preview.png` / `tree.json`
+ * back into it on the host.
+ */
+export async function renderInContainerAt(
+    templatedSource: string,
+    workDir: string,
+    opts: RenderOptions = {},
+): Promise<RenderResult> {
     const image = opts.image ?? DEFAULT_DOCKER_IMAGE;
     const tag = opts.tag ?? DEFAULT_IMAGE_TAG;
     const width = opts.width ?? DEFAULT_WIDTH;
@@ -238,7 +257,6 @@ export async function renderInContainer(
         );
     }
 
-    const workDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dali-ui-preview-'));
     const sourcePathHost = path.join(workDir, SOURCE_NAME);
     await fs.promises.writeFile(sourcePathHost, templatedSource, 'utf8');
 
