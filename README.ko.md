@@ -291,6 +291,10 @@ dali-ui-preview-cli samples/hello-dali.preview.dali.cpp --resolution 800x480 --t
 dali-ui-preview-cli samples/hello-dali.preview.dali.cpp --watch
 ```
 
+### 이미지 애셋
+
+`ImageView::New("assets/photo.jpg")` / `SetResourceUrl("…")`에 **프리뷰 파일 기준 상대경로**(또는 절대경로)를 주면 **양쪽 런타임 모두**에서 렌더됩니다 — CLI가 참조된 파일을 렌더로 복사하고 URL을 컨테이너 마운트(`/work/<name>`) 또는 호스트 경로로 재작성하므로 수동 마운트가 필요 없습니다. 못 찾거나 원격(`http(s)://`) URL은 ImageView 크기에 맞춰 번들된 **회색 broken-image placeholder**로 렌더돼 레이아웃이 유지됩니다 — 즉 회색 박스가 보이면 경로가 안 잡힌 것입니다. 이미지가 없는 프리뷰는 영향받지 않습니다(하네스 바이트 동일).
+
 ## 런타임 버전 (DALi 릴리스)
 
 렌더는 `ghcr.io/lwc0917/dali-preview-runtime`를 기준으로 실행됩니다. 이 이미지의 태그는 **DALi 릴리스**를 따라갑니다: 릴리스마다 `dali_<버전>` 태그 하나(예: `dali_2.5.26`)와, 굴러가는 `latest` 하나. **`latest`는 현재 DALi `2.5.26`을 가리킵니다**(아래 API 노트가 가정하는 dali-ui 버전); 어떤 버전이 있고 지금 무엇을 쓰는지는 `--list-versions`가 권위 있는 실시간 출처입니다. 첫 렌더는 태그를 자동으로 받으며, 아래 명령들은 어떤 태그를 보유하고 사용할지를 관리합니다. 이미지와 캐시가 **VS Code 확장과 공유**되므로, 런타임을 한 번만 갱신하면 두 도구 모두에 적용됩니다.

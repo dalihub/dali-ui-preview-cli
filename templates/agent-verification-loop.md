@@ -88,6 +88,13 @@ The OLD fluent style (`Type::New().SetX().SetY().Children({...})`) will **not** 
   value), just render — a `10` compile error names the exact symbol *and* the line. Fix and
   re-render. That round-trip is faster than reading SDK headers.
 
+### Images
+Use `ImageView::New("assets/photo.jpg")` (or `SetResourceUrl("…")`) with a path **relative to
+the preview file** (or an absolute path). The CLI copies the referenced file into the render
+so it resolves in **both** runtimes — no manual mounting. An unresolvable or remote
+(`http(s)://`) URL renders a **gray placeholder** at the ImageView's size (layout preserved),
+so a gray box means the path didn't resolve.
+
 ### Using components defined in OTHER files (cross-file)
 The CLI renders one preview, but it CAN pull in helpers/types/consts you defined elsewhere:
 just `#include "path/to/their_file.h"` (a **relative** path) at the top of your preview file.

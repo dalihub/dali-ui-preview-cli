@@ -79,6 +79,12 @@ compose cards, fields, and buttons from `FlexLayout`/`View` panels (`SetCornerRa
 `UiColor(0xRRGGBB)`. And don't guess exact enum/method names from memory: if unsure, just
 render — a `10` compile error names the exact symbol and line, faster than reading SDK headers.
 
+**Images.** Use `ImageView::New("assets/photo.jpg")` (or `SetResourceUrl("…")`) with a path
+**relative to the preview file** (or an absolute path). The CLI copies the file into the
+render so it resolves in **both** runtimes — no manual mounting. An unresolvable or remote
+(`http(s)://`) URL renders a **gray placeholder** at the ImageView's size (layout preserved),
+so a gray box means the path didn't resolve — fix the path or make the file local.
+
 **Cross-file components.** To use a helper/type/const defined in another project file,
 `#include "path/to/it.h"` (relative path) at the top of the preview — the CLI follows
 project-local includes, **inlines** those definitions, and renders. Limits: only

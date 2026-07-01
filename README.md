@@ -347,6 +347,10 @@ Re-render and re-emit on every change to the input file (FILE input only — not
 dali-ui-preview-cli samples/hello-dali.preview.dali.cpp --watch
 ```
 
+### Image assets
+
+`ImageView::New("assets/photo.jpg")` / `SetResourceUrl("…")` with a path **relative to the preview file** (or an absolute path) renders in **both** runtimes — the CLI copies the referenced file into the render (rewriting the URL to the container mount or a host path), so no manual staging is needed. An unresolvable or remote (`http(s)://`) URL renders a bundled **gray broken-image placeholder** at the ImageView's requested size, preserving layout — so a gray box means the path didn't resolve. Image-free previews are unaffected (the harness stays byte-identical).
+
 ## Runtime versions (DALi releases)
 
 The render runs against `ghcr.io/lwc0917/dali-preview-runtime`. Its tags track **DALi releases**: one `dali_<version>` tag per release (e.g. `dali_2.5.26`) plus a rolling `latest`. **`latest` currently tracks DALi `2.5.26`** (the dali-ui the API notes below assume); `--list-versions` is the authoritative, live source for which versions exist and which one you're on. The first render pulls a tag automatically; these commands manage which one you have and use. Because the image and caches are **shared with the VS Code extension**, updating the runtime once benefits both tools.

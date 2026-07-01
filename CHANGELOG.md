@@ -4,6 +4,15 @@
 
 ### Added
 
+- **Image assets now render (both runtimes).** `ImageView::New("assets/foo.jpg")` /
+  `SetResourceUrl("…")` local URLs — relative to the preview file, or absolute — are copied
+  into the render workDir and rewritten so they resolve inside the container (`/work/<name>`)
+  or on the host (local mode). Previously local-file images silently rendered blank because
+  the CLI never staged them. An unresolvable or remote (`http(s)://`) URL now renders a bundled
+  **gray broken-image placeholder** at the ImageView's size (layout preserved) instead of an
+  empty frame. Ports the VS Code extension's `stageImageAssets` + broken-image placeholder;
+  image-free previews keep a byte-identical harness. (`src/runtime/imageAssets.ts`.)
+
 - **Local (native) runtime.** Render without Docker on a host that already has a built DALi
   install plus `g++`/`pkg-config`/`Xvfb`. Select per render with `--runtime local` (or the
   `--local` shorthand) and point at the install with `--dali-prefix <path>` (or set
