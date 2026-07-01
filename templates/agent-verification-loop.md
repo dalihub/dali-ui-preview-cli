@@ -26,15 +26,22 @@ edit loop:
 4. If it's wrong, fix the code and go back to step 2. Repeat until it looks right.
 
 ### Setup (once)
-- **Docker** must be installed and usable. If it isn't, ask the human — installing
-  Docker needs `sudo`, which you should not do silently.
-- The runtime image (~290 MB) **auto-pulls on the first render**, or pull it explicitly:
-  `npx -y dali-ui-preview-cli --pull`.
-- **Runtime version.** The image tracks a **DALi release** (currently `dali-ui`
-  **2.5.26** — the API below targets that). `--list-versions` prints the exact
-  version in use and what's available; `--image-tag <dali_x.y.z>` pins a specific
-  release for one render. The image is **cached** once pulled, so a newer runtime is
-  *not* fetched automatically — run `--pull` to upgrade when one is published.
+There are **two runtimes** — pick one; **Docker is the default**.
+
+- **Docker (default, reproducible).** Docker must be installed and usable. If it isn't,
+  ask the human — installing Docker needs `sudo`, which you should not do silently. The
+  runtime image (~290 MB) **auto-pulls on the first render**, or pull it explicitly:
+  `npx -y dali-ui-preview-cli --pull`. The image tracks a **DALi release** (currently
+  `dali-ui` **2.5.26** — the API below targets it); `--list-versions` prints the exact
+  version and what's available, `--image-tag <dali_x.y.z>` pins one. The image is
+  **cached** once pulled — run `--pull` to upgrade when a newer runtime is published.
+- **Local (native, no Docker).** For a host that already has a built DALi install plus
+  `g++`/`pkg-config`/`Xvfb`. Add `--runtime local` (or `--local`) to a render and point at
+  the install with `--dali-prefix <path>` — or set `DESKTOP_PREFIX` / `DALI_PREVIEW_PREFIX`.
+  `dali-ui-preview-cli init` **detects and persists** the choice into `.dali/config.json`,
+  after which a bare render uses it with no flag. Caveats: fidelity depends on *your* DALi
+  build + host fonts (CJK may render as boxes without `fonts-noto-cjk`), and `--baseline`
+  pixel checks are runtime-specific. `--list-versions`/`--pull` are Docker-only.
 
 ### Reading the result
 - **stdout** = the JSON scene tree (pipe-friendly; parse it directly). If you redirect it
@@ -44,7 +51,9 @@ edit loop:
   Read it to view the layout.
 - **exit codes**: `0` ok · `10` compile error in *your* code (stderr carries
   `{"phase":"compile","message":...,"sourceLine":N}` — fix that line) · `11` render
-  error · `12` Docker unavailable (run `--pull`, or start Docker).
+  error · `12` Docker unavailable (run `--pull`, or start Docker) · `13` local runtime
+  unavailable (missing DALi prefix / `g++` / `Xvfb` / `pkg-config`; the stderr message
+  says which — pass `--dali-prefix`, set `DESKTOP_PREFIX`, or install the tool).
 
 ### Writing DALi UI that compiles (current dali-ui API)
 dali-ui is **non-fluent**: setters return `void`, so do **not** chain. Declare a named
@@ -78,6 +87,13 @@ The OLD fluent style (`Type::New().SetX().SetY().Children({...})`) will **not** 
 - **Don't guess exact enum/method names from memory.** If you're unsure (e.g. an alignment
   value), just render — a `10` compile error names the exact symbol *and* the line. Fix and
   re-render. That round-trip is faster than reading SDK headers.
+
+### Images
+Use `ImageView::New("assets/photo.jpg")` (or `SetResourceUrl("…")`) with a path **relative to
+the preview file** (or an absolute path). The CLI copies the referenced file into the render
+so it resolves in **both** runtimes — no manual mounting. An unresolvable or remote
+(`http(s)://`) URL renders a **gray placeholder** at the ImageView's size (layout preserved),
+so a gray box means the path didn't resolve.
 
 ### Using components defined in OTHER files (cross-file)
 The CLI renders one preview, but it CAN pull in helpers/types/consts you defined elsewhere:

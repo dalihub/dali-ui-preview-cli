@@ -1,5 +1,39 @@
 # Changelog
 
+## [0.6.0] - 2026-07-01
+
+### Added
+
+- **Image assets now render (both runtimes).** `ImageView::New("assets/foo.jpg")` /
+  `SetResourceUrl("…")` local URLs — relative to the preview file, or absolute — are copied
+  into the render workDir and rewritten so they resolve inside the container (`/work/<name>`)
+  or on the host (local mode). Previously local-file images silently rendered blank because
+  the CLI never staged them. An unresolvable or remote (`http(s)://`) URL now renders a bundled
+  **gray broken-image placeholder** at the ImageView's size (layout preserved) instead of an
+  empty frame. Ports the VS Code extension's `stageImageAssets` + broken-image placeholder;
+  image-free previews keep a byte-identical harness. (`src/runtime/imageAssets.ts`.)
+
+- **Local (native) runtime.** Render without Docker on a host that already has a built DALi
+  install plus `g++`/`pkg-config`/`Xvfb`. Select per render with `--runtime local` (or the
+  `--local` shorthand) and point at the install with `--dali-prefix <path>` (or set
+  `DESKTOP_PREFIX` / `DALI_PREVIEW_PREFIX`). Ports the VS Code extension's proven native
+  compile + Xvfb path (`src/runtime/{daliEnvironment,xvfb,localRunner}.ts`), so the
+  `RenderResult` / scene-tree / exit-code contract is **identical** to Docker mode.
+  - **Docker remains the default** — no behavior change when no runtime is selected.
+  - **`.dali/config.json`** persists a project's runtime choice + DALi prefix; selection
+    precedence is `--runtime`/`--local` → `DALI_PREVIEW_RUNTIME` env → config → `docker`.
+  - **`init`** now detects *both* runtimes, picks one (Docker if available, else a ready
+    local runtime; force with `init --docker` / `init --local`), persists the choice, and
+    smoke-renders in that runtime.
+  - **New exit code `13`** = selected local runtime unavailable (missing DALi prefix / `g++` /
+    `Xvfb` / `pkg-config`); `12` still means Docker unavailable. When Docker is down but a
+    native runtime looks ready, the error nudges you to retry with `--runtime local`.
+  - **New scripts** `test:e2e:local` / `test:e2e:docker` render the bundled samples for real
+    in each runtime and assert a non-blank PNG + a valid scene tree.
+  - Caveat: local renders use the host DALi build + fonts (CJK needs `fonts-noto-cjk`), so
+    output can differ from Docker; `--baseline` pixel checks are runtime-specific. The scene
+    tree is structurally the same in both. `--list-versions`/`--pull` stay Docker-only.
+
 ## [0.5.0] - 2026-06-30
 
 ### Added

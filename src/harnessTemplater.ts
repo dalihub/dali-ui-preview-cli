@@ -55,6 +55,14 @@ export interface TemplateOptions {
     /** Absolute container path the harness writes the scene-tree JSON to. */
     metadataPath?: string;
     /**
+     * When set, the harness registers this path via `UiConfig::SetBrokenImageUrl`
+     * (before `Apply()`) so an ImageView with an unresolvable/remote URL renders
+     * the gray placeholder at its requested size instead of nothing. Must resolve
+     * at render time (a staged `/work/<name>` in docker, or a host path in local).
+     * Omit to keep the harness byte-identical (`UiConfig::New().Apply();`).
+     */
+    brokenImageUrl?: string;
+    /**
      * Override the template file location (for tests). Defaults to
      * `<package root>/server/preview_harness.cpp.template`.
      */
@@ -70,6 +78,32 @@ const DEFAULT_BACKGROUND_COLOR = 'Dali::Color::BLACK';
 const DEFAULT_FONT_SETUP = '    // no custom fonts';
 const DEFAULT_OUTPUT_PATH = '/work/preview.png';
 const DEFAULT_METADATA_PATH = '/work/tree.json';
+/** The pre-existing UiConfig line — used verbatim when no broken-image URL is set,
+ *  so an image-free preview's harness stays byte-identical. */
+const DEFAULT_UI_CONFIG_SETUP = 'UiConfig::New().Apply();';
+
+/** Escape a value for embedding inside a C++ double-quoted string literal. */
+function escapeCppLiteral(s: string): string {
+    return s.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+}
+
+/**
+ * Build the `{{UI_CONFIG_SETUP}}` slot. Without a broken-image URL it is the
+ * original one-liner (byte-identical). With one, it uses the non-fluent form
+ * (works whether the setter returns void or a reference) to register the
+ * placeholder before `Apply()`.
+ */
+function uiConfigSetup(brokenImageUrl?: string): string {
+    if (!brokenImageUrl) {
+        return DEFAULT_UI_CONFIG_SETUP;
+    }
+    const p = escapeCppLiteral(brokenImageUrl);
+    return [
+        'UiConfig __uiConfig = UiConfig::New();',
+        `  __uiConfig.SetBrokenImageUrl(UiConfig::BrokenImageType::NORMAL, "${p}");`,
+        '  __uiConfig.Apply();',
+    ].join('\n');
+}
 
 /**
  * Theme → DALi background-color expression (M5/F5.1). `dark` keeps the current
@@ -145,6 +179,7 @@ export function templateHarness(userCode: string, opts: TemplateOptions = {}): s
     out = fillPlaceholder(out, 'METADATA_PATH', metadataPath);
     out = fillPlaceholder(out, 'USER_INCLUDES', opts.includes ?? '');
     out = fillPlaceholder(out, 'USER_GLOBALS', opts.globals ?? '');
+    out = fillPlaceholder(out, 'UI_CONFIG_SETUP', uiConfigSetup(opts.brokenImageUrl));
 
     // Safety net: a leftover placeholder would produce uncompilable C++.
     const leftover = out.match(/\{\{[A-Z_]+\}\}/);

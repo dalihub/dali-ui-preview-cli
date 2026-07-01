@@ -13,6 +13,9 @@ import { execFile } from 'child_process';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import { checkLocalReadiness } from './runtime/localRunner';
+import { writeConfig, DaliConfig } from './runtime/config';
+import { findProjectRoot } from './sliceSources';
 
 /** Package root (out/init.js -> ..). Bundled `templates/`, `skills/`, `samples/` live here. */
 const PKG_ROOT = path.join(__dirname, '..');
@@ -65,6 +68,18 @@ function writeSkill(dir: string): string {
   return path.join('.claude', 'skills', 'dali-preview', 'SKILL.md');
 }
 
+/**
+ * Pick the runtime for `init`: an explicit flag wins; else docker if the daemon is
+ * up; else local if the host is ready; else null (neither usable — write the docs
+ * and skip the render). Pure so it is unit-tested without spawning anything.
+ */
+export function chooseRuntime(opts: { flagged?: 'docker' | 'local'; dockerOk: boolean; localReady: boolean }): 'docker' | 'local' | null {
+  if (opts.flagged === 'docker' || opts.flagged === 'local') { return opts.flagged; }
+  if (opts.dockerOk) { return 'docker'; }
+  if (opts.localReady) { return 'local'; }
+  return null;
+}
+
 export async function runInit(argv: string[]): Promise<number> {
   const dir = path.resolve(argv.find((a) => !a.startsWith('-')) ?? '.');
   const skipRender = argv.includes('--no-render');
@@ -77,30 +92,48 @@ export async function runInit(argv: string[]): Promise<number> {
   console.log(`  ${writeAgentsMd(dir)} AGENTS.md  (verification-loop instruction)`);
   console.log(`  wrote ${writeSkill(dir)}  (Claude Code skill)`);
 
-  // Best-effort runtime setup — never fail init just because Docker isn't ready yet.
-  const docker = await run('docker', ['info']);
-  if (docker.code !== 0) {
+  // Detect BOTH runtimes and choose. An explicit --docker/--local overrides; else
+  // docker is preferred (reproducible), else a ready native runtime is used.
+  const flagged = argv.includes('--local') ? 'local'
+    : (argv.includes('--docker') ? 'docker' : undefined);
+  const dockerOk = (await run('docker', ['info'])).code === 0;
+  const local = checkLocalReadiness({ baseDir: dir });
+  const mode = chooseRuntime({ flagged, dockerOk, localReady: local.ready });
+
+  if (mode === null) {
     console.log('');
-    console.log('⚠️  Docker not available yet. Install Docker, then run:  dali-ui-preview-cli --pull');
-    console.log('   The instruction files are in place — your agent can render once Docker is ready.');
+    console.log('⚠️  No runtime ready yet. Either:');
+    console.log('   • install Docker, then:  dali-ui-preview-cli --pull');
+    console.log('   • or install a native DALi prefix + g++/Xvfb/pkg-config and re-run with --local.');
+    if (local.issues.length) { console.log(`   local checks: ${local.issues.join(' ')}`); }
+    console.log('   The instruction files are in place — your agent can render once a runtime is ready.');
     return 0;
   }
 
-  console.log('');
-  console.log('Pulling the runtime image (first time ~290 MB, cached after)…');
-  const pull = await run(process.execPath, [CLI_JS, '--pull']);
-  if (pull.code !== 0) {
-    console.log(`⚠️  image pull failed (you can retry with --pull):\n${pull.out.trim().slice(0, 1200)}`);
-    return 0;
+  // Persist the choice so subsequent renders default to it with no flag.
+  const root = findProjectRoot(dir);
+  const cfg: DaliConfig = { runtime: mode };
+  if (mode === 'local' && local.prefix) { cfg.daliPrefix = local.prefix; }
+  const cfgPath = writeConfig(root, cfg);
+  console.log(`  wrote ${path.relative(dir, cfgPath) || cfgPath}  (runtime: ${mode}${mode === 'local' && local.prefix ? `, prefix ${local.prefix}` : ''})`);
+
+  if (mode === 'docker') {
+    console.log('');
+    console.log('Pulling the runtime image (first time ~290 MB, cached after)…');
+    const pull = await run(process.execPath, [CLI_JS, '--pull']);
+    if (pull.code !== 0) {
+      console.log(`⚠️  image pull failed (you can retry with --pull):\n${pull.out.trim().slice(0, 1200)}`);
+      return 0;
+    }
+    console.log('  ✓ runtime image ready');
   }
-  console.log('  ✓ runtime image ready');
 
   if (!skipRender) {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'dali-init-'));
     const png = path.join(tmp, 'hello.png');
     const sample = path.join(PKG_ROOT, 'samples', 'hello-dali.preview.dali.cpp');
-    console.log('Smoke-rendering the hello sample…');
-    const r = await run(process.execPath, [CLI_JS, sample, '--image', png]);
+    console.log(`Smoke-rendering the hello sample (${mode})…`);
+    const r = await run(process.execPath, [CLI_JS, sample, '--runtime', mode, '--image', png]);
     if (r.code === 0 && fs.existsSync(png)) {
       console.log('  ✓ render OK');
     } else {

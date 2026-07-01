@@ -416,7 +416,7 @@ private:
 int main(int argc, char* argv[])
 {
   Application app = Application::New(&argc, &argv, "");
-  UiConfig::New().Apply();
+  {{UI_CONFIG_SETUP}}
   PreviewApp preview(app);
   app.MainLoop();
   return 0;

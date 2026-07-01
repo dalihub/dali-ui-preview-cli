@@ -28,13 +28,40 @@ LLM coding agents can write UI code, but they can't *see* whether it looks right
 
 ## Prerequisites
 
-- **Docker**, usable by your user (the render preflight runs `docker info`).
-- **Node.js >= 18** (only to run the CLI itself).
-- The runtime image **auto-pulls on the first render** (`ghcr.io/lwc0917/dali-preview-runtime`, ~290 MB; DALi Toolkit + Xvfb for off-screen rendering).
+- **Node.js >= 18** (to run the CLI itself), plus **one runtime** (below).
+- **Docker** (the default runtime), usable by your user — the render preflight runs `docker info`. The runtime image **auto-pulls on the first render** (`ghcr.io/lwc0917/dali-preview-runtime`, ~290 MB; DALi Toolkit + Xvfb for off-screen rendering).
 
-> **Shared with the DALi Preview VS Code extension.** This CLI uses the *same* runtime image and the *same* named volumes (`dali-preview-ccache`, `dali-preview-shader-cache`) as the DALi Preview VS Code extension. If you already use the extension, the image and warm build caches are reused — no extra download, faster renders, and updating the image once benefits both.
+> **Shared with the DALi Preview VS Code extension.** In Docker mode this CLI uses the *same* runtime image and the *same* named volumes (`dali-preview-ccache`, `dali-preview-shader-cache`) as the DALi Preview VS Code extension. If you already use the extension, the image and warm build caches are reused — no extra download, faster renders, and updating the image once benefits both.
 
-The container is only needed for the render path. `--version`, `--help`, `--list-versions`, and the pure tree/overlay/diff logic do not require a live daemon.
+The container is only needed for the Docker render path. `--version`, `--help`, `--list-versions`, and the pure tree/overlay/diff logic do not require a live daemon.
+
+## Runtimes: Docker (default) or local
+
+You can render two ways. **Docker is the default and needs no setup beyond Docker.** Pick per render, or persist a default with `init`.
+
+| | Docker (default) | Local (native) |
+|---|---|---|
+| Prerequisite | Docker daemon + runtime image | A built DALi install + `g++`, `pkg-config`, `Xvfb` on the host |
+| Select | (default) | `--runtime local` / `--local` |
+| Point at DALi | — | `--dali-prefix <path>`, or `DESKTOP_PREFIX` / `DALI_PREVIEW_PREFIX` env |
+| Determinism | pinned image, `llvmpipe` software raster | depends on *your* DALi build + host fonts/GPU (may differ) |
+| Image mgmt | `--list-versions` / `--pull` | n/a (no image) |
+| Failure exit | `12` Docker unavailable | `13` local runtime unavailable |
+
+**Local mode** is for uifw developers who rebuild DALi and want the preview to reflect their fresh `.so` files. Two ways to use it:
+
+```bash
+# one-off:
+dali-ui-preview-cli app.preview.dali.cpp --runtime local --dali-prefix ~/dali-env/opt --image out.png
+
+# persist the choice once (writes .dali/config.json), then render with no flag:
+dali-ui-preview-cli init            # detects Docker AND local, picks one, persists it
+dali-ui-preview-cli app.preview.dali.cpp --image out.png
+```
+
+Selection precedence (highest first): `--runtime` / `--local` flag → `DALI_PREVIEW_RUNTIME` env → `.dali/config.json` → **docker** default. The DALi prefix resolves by: `--dali-prefix` → `DALI_PREVIEW_PREFIX` → `.dali/config.json` → `DESKTOP_PREFIX` → a `setenv` file → `pkg-config` → common paths.
+
+> **Caveats for local mode.** Renders use *your* host DALi build, fonts, and GPU rather than the pinned image, so output can differ from Docker (e.g. CJK text needs `fonts-noto-cjk` installed, or it renders as boxes). Because of that, `--baseline` visual checks are **runtime-specific** — capture and verify a baseline in the *same* runtime you'll compare against. The scene-tree structure is the same in both runtimes.
 
 ## Install
 
@@ -76,14 +103,17 @@ npx -y dali-ui-preview-cli init
 `init` seeds the project so any agent picks it up automatically:
 - writes **`AGENTS.md`** — the verify-loop instruction, read by Codex, Cursor, Claude Code, …
 - writes **`.claude/skills/dali-preview/SKILL.md`** — Claude Code auto-activates it
-- verifies Docker, pulls the runtime image (~290 MB), and smoke-renders a sample
+- **detects both runtimes**, picks one (Docker if available, else a ready local runtime — or force it with `init --docker` / `init --local`), **persists the choice to `.dali/config.json`**, then (Docker only) pulls the image and smoke-renders a sample
 
 From then on, when you (or your agent) write DALi UI in that project, the agent runs the CLI,
-**Reads the rendered PNG**, checks the scene tree, and fixes — no further setup.
+**Reads the rendered PNG**, checks the scene tree, and fixes — no further setup. Because the
+runtime is persisted, later renders need no `--runtime` flag.
 
-> **Prerequisite:** Docker installed on the machine. The agent can't install Docker itself
-> (that needs `sudo`), but it *can* pull the image and render once Docker is present. `init`
-> tells you if Docker is missing and still writes the instruction files.
+> **Prerequisite:** one runtime. For **Docker** (default) the agent can't install Docker
+> itself (that needs `sudo`) but *can* pull the image and render once Docker is present. For
+> **local** the host needs a built DALi prefix + `g++`/`Xvfb`/`pkg-config` (`init --local`, or
+> set `DESKTOP_PREFIX`). Either way `init` still writes the instruction files even if no runtime
+> is ready yet.
 
 ### Manual setup (no `init`)
 
@@ -317,6 +347,10 @@ Re-render and re-emit on every change to the input file (FILE input only — not
 dali-ui-preview-cli samples/hello-dali.preview.dali.cpp --watch
 ```
 
+### Image assets
+
+`ImageView::New("assets/photo.jpg")` / `SetResourceUrl("…")` with a path **relative to the preview file** (or an absolute path) renders in **both** runtimes — the CLI copies the referenced file into the render (rewriting the URL to the container mount or a host path), so no manual staging is needed. An unresolvable or remote (`http(s)://`) URL renders a bundled **gray broken-image placeholder** at the ImageView's requested size, preserving layout — so a gray box means the path didn't resolve. Image-free previews are unaffected (the harness stays byte-identical).
+
 ## Runtime versions (DALi releases)
 
 The render runs against `ghcr.io/lwc0917/dali-preview-runtime`. Its tags track **DALi releases**: one `dali_<version>` tag per release (e.g. `dali_2.5.26`) plus a rolling `latest`. **`latest` currently tracks DALi `2.5.26`** (the dali-ui the API notes below assume); `--list-versions` is the authoritative, live source for which versions exist and which one you're on. The first render pulls a tag automatically; these commands manage which one you have and use. Because the image and caches are **shared with the VS Code extension**, updating the runtime once benefits both tools.
@@ -398,6 +432,7 @@ Note: DALi inserts internal `CameraActor` siblings (zero-area boxes); `--at`/`--
 | `10` | Compile error in your code. |
 | `11` | Render / capture error. |
 | `12` | Docker unavailable (the `docker info` preflight failed). |
+| `13` | Local runtime unavailable (`--runtime local` selected but a DALi prefix / `g++` / `Xvfb` / `pkg-config` is missing). |
 | `20` | Verify diff mismatch (rendered, but diverged from the baseline). |
 
 On a compile/render failure, a structured `{ "phase", "message", "sourceLine" }` JSON is printed to **stderr** (stdout stays empty), e.g.:
