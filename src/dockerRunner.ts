@@ -32,10 +32,12 @@ import * as os from 'os';
 import * as path from 'path';
 import { promisify } from 'util';
 
+import { GHCR_IMAGE } from './registry';
+
 const execFileAsync = promisify(execFile);
 
-/** Default runtime image — note: lwc0917, NOT the sibling extension's dalihub. */
-export const DEFAULT_DOCKER_IMAGE = 'ghcr.io/lwc0917/dali-preview-runtime';
+/** Default runtime image (GHCR). On the corp network the BART proxy is used instead — see registry.ts. */
+export const DEFAULT_DOCKER_IMAGE = GHCR_IMAGE;
 export const DEFAULT_IMAGE_TAG = 'latest';
 
 /** Render resolution defaults (mirrors harnessTemplater) — TV FHD. */

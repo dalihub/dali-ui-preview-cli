@@ -11,6 +11,8 @@ export interface DaliConfig {
   runtime?: 'docker' | 'local';
   daliPrefix?: string;
   imageTag?: string;
+  /** Runtime image name (no tag), persisted by `init` after registry auto-detection. */
+  image?: string;
 }
 
 const CONFIG_REL = path.join('.dali', 'config.json');
@@ -31,6 +33,7 @@ export function readConfig(baseDir: string): DaliConfig {
       if (parsed.runtime === 'docker' || parsed.runtime === 'local') { out.runtime = parsed.runtime; }
       if (typeof parsed.daliPrefix === 'string') { out.daliPrefix = parsed.daliPrefix; }
       if (typeof parsed.imageTag === 'string') { out.imageTag = parsed.imageTag; }
+      if (typeof parsed.image === 'string') { out.image = parsed.image; }
       return out;
     }
     return {};

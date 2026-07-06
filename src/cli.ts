@@ -28,6 +28,7 @@ import {
   DEFAULT_IMAGE_TAG,
 } from './dockerRunner';
 import { render, resolveRuntimeMode, RuntimeMode } from './render';
+import { readConfig } from './runtime/config';
 import { checkLocalReadiness } from './runtime/localRunner';
 import { listVersions, pullImage } from './imageManager';
 import { buildSlice } from './sliceBuilder';
@@ -689,12 +690,17 @@ interface ImageRef {
 /**
  * Resolve the runtime image name + tag ONCE from the parsed args, applying the
  * defaults. Threaded into every command (render, verify, list-versions, pull) so
- * they all target the same `<image>:<tag>`. `--runtime-image` overrides the name;
- * `--image-tag` overrides the tag (default `latest`).
+ * they all target the same `<image>:<tag>`.
+ *
+ * Image-name precedence: `--runtime-image` → `DALI_PREVIEW_IMAGE` env → the
+ * `.dali/config.json` `image` written by `init` (BART GHCR proxy on the corp network,
+ * else GHCR) → the GHCR default. No network probe here — `init` does the detection and
+ * persists the result, so the render hot path stays synchronous. `--image-tag`
+ * overrides the tag (default `latest`).
  */
-function resolveImageRef(parsed: RenderArgs): ImageRef {
+function resolveImageRef(parsed: RenderArgs, baseDir: string = process.cwd()): ImageRef {
   return {
-    image: parsed.image ?? DEFAULT_DOCKER_IMAGE,
+    image: parsed.image ?? process.env.DALI_PREVIEW_IMAGE ?? readConfig(baseDir).image ?? DEFAULT_DOCKER_IMAGE,
     tag: parsed.imageTag ?? DEFAULT_IMAGE_TAG,
   };
 }
@@ -769,7 +775,7 @@ function resolveRuntimeContext(parsed: RenderArgs, resolved: ResolvedInput): Run
   const baseDir = resolved.sourcePath && !resolved.sourcePath.startsWith('<')
     ? path.dirname(path.resolve(resolved.sourcePath))
     : process.cwd();
-  const ref = resolveImageRef(parsed);
+  const ref = resolveImageRef(parsed, baseDir);
   return {
     mode: resolveRuntimeMode({ flag: parsed.runtime, baseDir }),
     image: ref.image,

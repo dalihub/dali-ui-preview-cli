@@ -24,6 +24,12 @@ describe('runtime/config', () => {
     expect(readConfig(nested)).to.deep.equal({ runtime: 'local', daliPrefix: '/opt/dali' });
   });
 
+  it('round-trips the auto-detected runtime image', () => {
+    const image = 'ghcr-docker-remote.bart.sec.samsung.net/lwc0917/dali-preview-runtime';
+    writeConfig(root, { runtime: 'docker', image });
+    expect(readConfig(root)).to.deep.equal({ runtime: 'docker', image });
+  });
+
   it('returns {} for malformed JSON instead of throwing', () => {
     fs.mkdirSync(path.join(root, '.dali'), { recursive: true });
     fs.writeFileSync(path.join(root, '.dali', 'config.json'), '{ not json');

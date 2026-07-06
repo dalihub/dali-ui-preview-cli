@@ -17,6 +17,7 @@
 import { spawn, execFile } from 'child_process';
 import { promisify } from 'util';
 import { listRemoteTags } from './registryClient';
+import { describeRegistry } from './registry';
 
 const execFileAsync = promisify(execFile);
 
@@ -185,6 +186,10 @@ export async function listVersions(image: string, currentTag: string): Promise<V
  */
 export function pullImage(image: string, tag: string): Promise<PullResult> {
     const ref = `${image}:${tag}`;
+    // Tell the user which server the ~290 MB download comes from (stderr — stdout is
+    // reserved for the JSON contract). BART proxy on the corp network, else GHCR.
+    const src = describeRegistry(image);
+    process.stderr.write(`Pulling ${ref}\n  from ${src.label} — ${src.host}\n`);
     return new Promise<PullResult>((resolve, reject) => {
         // inherit stderr → docker's live progress bars go straight to our stderr;
         // pipe docker's STDOUT and forward it to our stderr too, so docker's final

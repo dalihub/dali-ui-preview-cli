@@ -16,6 +16,7 @@ import * as path from 'path';
 import { checkLocalReadiness } from './runtime/localRunner';
 import { writeConfig, DaliConfig } from './runtime/config';
 import { findProjectRoot } from './sliceSources';
+import { detectDefaultImage, GHCR_HOST } from './registry';
 
 /** Package root (out/init.js -> ..). Bundled `templates/`, `skills/`, `samples/` live here. */
 const PKG_ROOT = path.join(__dirname, '..');
@@ -110,17 +111,31 @@ export async function runInit(argv: string[]): Promise<number> {
     return 0;
   }
 
+  // In docker mode, auto-detect which registry to pull from: the BART GHCR proxy on
+  // the Samsung corp network (avoids the intermittent GHCR blob-pull drops), else
+  // GHCR directly. Persisted to config so subsequent renders reuse it (no re-probe),
+  // and passed explicitly to the pull/smoke-render children below so they don't depend
+  // on cwd-relative config discovery.
+  const detectedImage = mode === 'docker' ? await detectDefaultImage() : undefined;
+
   // Persist the choice so subsequent renders default to it with no flag.
   const root = findProjectRoot(dir);
   const cfg: DaliConfig = { runtime: mode };
   if (mode === 'local' && local.prefix) { cfg.daliPrefix = local.prefix; }
+  if (detectedImage) { cfg.image = detectedImage; }
   const cfgPath = writeConfig(root, cfg);
   console.log(`  wrote ${path.relative(dir, cfgPath) || cfgPath}  (runtime: ${mode}${mode === 'local' && local.prefix ? `, prefix ${local.prefix}` : ''})`);
+  if (detectedImage) {
+    const via = detectedImage.startsWith(`${GHCR_HOST}/`) ? 'GHCR' : 'BART proxy (corp network)';
+    console.log(`  runtime image: ${detectedImage}  (via ${via})`);
+  }
+
+  const runtimeImageArgs = detectedImage ? ['--runtime-image', detectedImage] : [];
 
   if (mode === 'docker') {
     console.log('');
     console.log('Pulling the runtime image (first time ~290 MB, cached after)…');
-    const pull = await run(process.execPath, [CLI_JS, '--pull']);
+    const pull = await run(process.execPath, [CLI_JS, '--pull', ...runtimeImageArgs]);
     if (pull.code !== 0) {
       console.log(`⚠️  image pull failed (you can retry with --pull):\n${pull.out.trim().slice(0, 1200)}`);
       return 0;
@@ -133,7 +148,7 @@ export async function runInit(argv: string[]): Promise<number> {
     const png = path.join(tmp, 'hello.png');
     const sample = path.join(PKG_ROOT, 'samples', 'hello-dali.preview.dali.cpp');
     console.log(`Smoke-rendering the hello sample (${mode})…`);
-    const r = await run(process.execPath, [CLI_JS, sample, '--runtime', mode, '--image', png]);
+    const r = await run(process.execPath, [CLI_JS, sample, '--runtime', mode, '--image', png, ...runtimeImageArgs]);
     if (r.code === 0 && fs.existsSync(png)) {
       console.log('  ✓ render OK');
     } else {

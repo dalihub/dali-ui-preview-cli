@@ -2,6 +2,7 @@
 // Verbatim copy; lists remote GHCR tags via anonymous pull token using node `https` only.
 
 import * as https from 'https';
+import { GHCR_HOST, BART_PROXY_HOST } from './registry';
 
 /** Minimal GET-JSON helper with a single redirect hop and a timeout. */
 function getJson(url: string, headers: Record<string, string> = {}): Promise<any> {
@@ -34,12 +35,14 @@ function getJson(url: string, headers: Record<string, string> = {}): Promise<any
 }
 
 /**
- * List available tags for a GHCR image using an anonymous pull token.
+ * List available tags using an anonymous GHCR pull token.
  * Throws on network / parse / auth failure (callers should catch and surface).
  *
- * Only `ghcr.io` is supported today; other registries return an empty list.
+ * Accepts both `ghcr.io/<path>` and the BART proxy `ghcr-docker-remote.bart.sec.samsung.net/<path>`
+ * (same repo path) — the tag list is ALWAYS read from ghcr.io, because the proxy only
+ * lists tags it has already cached. Any other registry returns an empty list.
  *
- *   imageName = "ghcr.io/lwc0917/dali-preview-runtime"
+ *   imageName = "ghcr.io/lwc0917/dali-preview-runtime"  (or the BART proxy equivalent)
  *     → token: GET https://ghcr.io/token?scope=repository:<path>:pull
  *     → tags:  GET https://ghcr.io/v2/<path>/tags/list  (Bearer <token>)
  */
@@ -50,7 +53,7 @@ export async function listRemoteTags(imageName: string): Promise<string[]> {
     }
     const host = imageName.slice(0, slash);
     const repoPath = imageName.slice(slash + 1);
-    if (host !== 'ghcr.io') {
+    if (host !== GHCR_HOST && host !== BART_PROXY_HOST) {
         return [];
     }
 

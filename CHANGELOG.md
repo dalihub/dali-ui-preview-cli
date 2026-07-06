@@ -1,5 +1,20 @@
 # Changelog
 
+## [Unreleased]
+
+### Changed
+
+- **Runtime image registry now auto-detects: BART GHCR proxy inside Samsung, else GHCR.**
+  Inside the corporate network, direct GHCR pulls intermittently drop; the CLI now pulls the
+  runtime image from BART's anonymous GHCR caching proxy
+  (`ghcr-docker-remote.bart.sec.samsung.net/lwc0917/dali-preview-runtime`) when reachable, else
+  `ghcr.io/lwc0917/dali-preview-runtime` — same repo path, so tags/digests match. `init`
+  probes and persists the choice to `.dali/config.json` (`image` key). Image precedence:
+  `--runtime-image` → `DALI_PREVIEW_IMAGE` env → `.dali/config.json` `image` → GHCR default.
+  `--pull` now prints **which server** the ~290 MB download comes from. `--list-versions`
+  always reads tags from ghcr.io, so the full tag list shows through the proxy too. `doctor`
+  reports the same resolved image a render would use.
+
 ## [0.7.0] - 2026-07-01
 
 ### Added

@@ -29,7 +29,7 @@ LLM coding agents can write UI code, but they can't *see* whether it looks right
 ## Prerequisites
 
 - **Node.js >= 18** (to run the CLI itself), plus **one runtime** (below).
-- **Docker** (the default runtime), usable by your user — the render preflight runs `docker info`. The runtime image **auto-pulls on the first render** (`ghcr.io/lwc0917/dali-preview-runtime`, ~290 MB; DALi Toolkit + Xvfb for off-screen rendering).
+- **Docker** (the default runtime), usable by your user — the render preflight runs `docker info`. The runtime image **auto-pulls on the first render** (~290 MB; DALi Toolkit + Xvfb for off-screen rendering). The **registry auto-detects**: inside the Samsung network the BART GHCR proxy `ghcr-docker-remote.bart.sec.samsung.net/lwc0917/dali-preview-runtime` (avoids intermittent GHCR pull drops), otherwise `ghcr.io/lwc0917/dali-preview-runtime` — same repo path, so tags/digests match. The pull prints which server it comes from. Override with `--runtime-image`, `DALI_PREVIEW_IMAGE`, or the `image` key in `.dali/config.json` (written by `init`).
 
 > **Shared with the DALi Preview VS Code extension.** In Docker mode this CLI uses the *same* runtime image and the *same* named volumes (`dali-preview-ccache`, `dali-preview-shader-cache`) as the DALi Preview VS Code extension. If you already use the extension, the image and warm build caches are reused — no extra download, faster renders, and updating the image once benefits both.
 
@@ -380,7 +380,7 @@ dali-ui-preview-cli samples/hello-dali.preview.dali.cpp --watch
 
 ## Runtime versions (DALi releases)
 
-The render runs against `ghcr.io/lwc0917/dali-preview-runtime`. Its tags track **DALi releases**: one `dali_<version>` tag per release (e.g. `dali_2.5.26`) plus a rolling `latest`. **`latest` currently tracks DALi `2.5.26`** (the dali-ui the API notes below assume); `--list-versions` is the authoritative, live source for which versions exist and which one you're on. The first render pulls a tag automatically; these commands manage which one you have and use. Because the image and caches are **shared with the VS Code extension**, updating the runtime once benefits both tools.
+The render runs against `lwc0917/dali-preview-runtime` — pulled from the **BART GHCR proxy** (`ghcr-docker-remote.bart.sec.samsung.net`) inside the Samsung network, else from **GHCR** (`ghcr.io`); the registry is auto-detected and the pull tells you which one it used. Its tags track **DALi releases**: one `dali_<version>` tag per release (e.g. `dali_2.5.26`) plus a rolling `latest`. **`latest` currently tracks DALi `2.5.26`** (the dali-ui the API notes below assume); `--list-versions` is the authoritative, live source for which versions exist and which one you're on (tags are always read from ghcr.io, so the proxy shows the full list too). The first render pulls a tag automatically; these commands manage which one you have and use. Because the image and caches are **shared with the VS Code extension**, updating the runtime once benefits both tools.
 
 List the available versions (remote registry ∪ your local store) as JSON — does **not** render, exit 0:
 

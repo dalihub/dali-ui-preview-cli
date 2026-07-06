@@ -199,7 +199,10 @@ export function parseDoctorArgs(argv: string[]): DoctorArgs {
   return {
     daliPrefix,
     imageTag: imageTag ?? DEFAULT_IMAGE_TAG,
-    image: image ?? DEFAULT_DOCKER_IMAGE,
+    // Mirror the render path's precedence (resolveImageRef) so doctor probes the SAME
+    // image a render would — otherwise, on the corp network, a BART-proxy-pulled image
+    // would be reported not-pulled under its GHCR name.
+    image: image ?? process.env.DALI_PREVIEW_IMAGE ?? readConfig(process.cwd()).image ?? DEFAULT_DOCKER_IMAGE,
   };
 }
 
