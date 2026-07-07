@@ -30,7 +30,15 @@ import {
 import { render, resolveRuntimeMode, RuntimeMode } from './render';
 import { readConfig, writeConfig } from './runtime/config';
 import { checkLocalReadiness } from './runtime/localRunner';
-import { listVersions, pullImage } from './imageManager';
+import {
+  listVersions,
+  pullImage,
+  localTags,
+  pullWithFallback,
+  ensureImageWithFallback,
+  EnsureDeps,
+} from './imageManager';
+import { listRemoteTags } from './registryClient';
 import { buildSlice } from './sliceBuilder';
 import { resolveProjectIncludes, findProjectRoot } from './sliceSources';
 import { detectDefaultImage, describeRegistry } from './registry';
@@ -741,7 +749,9 @@ export async function resolveImageRefAuto(
   baseDir: string = process.cwd(),
   detect: (timeoutMs?: number) => Promise<string> = detectDefaultImage,
 ): Promise<ImageRef> {
-  const tag = parsed.imageTag ?? DEFAULT_IMAGE_TAG;
+  // An explicit --image-tag wins; otherwise honor a `imageTag` pinned in config (e.g. the immutable
+  // tag pinned by the corp-proxy rolling-tag fallback) so a later render reuses it; else the default.
+  const tag = parsed.imageTag ?? readConfig(baseDir).imageTag ?? DEFAULT_IMAGE_TAG;
   const explicit = parsed.image ?? process.env.DALI_PREVIEW_IMAGE ?? readConfig(baseDir).image;
   if (explicit) { return { image: explicit, tag }; }
   const image = await detect();
@@ -752,6 +762,29 @@ export async function resolveImageRefAuto(
     /* best-effort: read-only dir / no project root — still render, just re-probe next time */
   }
   return { image, tag };
+}
+
+/**
+ * Build the real-I/O {@link EnsureDeps} for the corp-proxy rolling-tag fallback. The fallback tag
+ * is pinned to `.dali/config.json` (best-effort) so subsequent renders reuse it via
+ * {@link resolveImageRefAuto}. `hasLocal` treats a `docker images` failure as "absent" so the
+ * pull itself surfaces the real docker error.
+ */
+function makeEnsureDeps(baseDir: string): EnsureDeps {
+  return {
+    hasLocal: async (image, tag) => {
+      try { return (await localTags(image)).includes(tag); } catch { return false; }
+    },
+    pull: pullImage,
+    listTags: listRemoteTags,
+    persistTag: (tag) => {
+      try {
+        const root = findProjectRoot(baseDir);
+        writeConfig(root, { ...readConfig(root), imageTag: tag });
+      } catch { /* best-effort pin: read-only dir / no project root */ }
+    },
+    warn: (message) => process.stderr.write(`dali-ui-preview-cli: ${message}\n`),
+  };
 }
 
 /**
@@ -848,10 +881,18 @@ async function resolveRuntimeContext(parsed: RenderArgs, resolved: ResolvedInput
   // Auto-detect the registry (BART/GHCR) when nothing is configured, so a render without a
   // prior `init` still avoids the throttled direct-GHCR pull on the corp network.
   const ref = await resolveImageRefAuto(parsed, baseDir);
+  const mode = resolveRuntimeMode({ flag: parsed.runtime, baseDir });
+  // Docker mode: make sure the image is actually pullable BEFORE `docker run` auto-pulls it, so a
+  // rolling tag the corp proxy can't serve (`latest`) self-heals to the newest immutable instead of
+  // failing the render. Agents call render directly (no prior `--pull`), so this can't rely on one.
+  // No-op when the image is already local. Local mode doesn't use the image.
+  const tag = mode === 'docker'
+    ? await ensureImageWithFallback(ref.image, ref.tag, makeEnsureDeps(baseDir))
+    : ref.tag;
   return {
-    mode: resolveRuntimeMode({ flag: parsed.runtime, baseDir }),
+    mode,
     image: ref.image,
-    tag: ref.tag,
+    tag,
     daliPrefix: parsed.daliPrefix,
     baseDir,
   };
@@ -1157,8 +1198,12 @@ async function runPull(parsed: RenderArgs): Promise<number> {
     return EXIT.DOCKER_UNAVAILABLE;
   }
   try {
-    const { ref } = await pullImage(image, tag);
-    process.stdout.write(`${JSON.stringify({ pulled: ref, ok: true })}\n`);
+    // Self-heal a rolling tag the corp proxy can't serve (`latest`) → newest immutable, pinned to
+    // config so later renders reuse it. `--pull` deliberately re-pulls even if local (a refresh).
+    const landedTag = await pullWithFallback(image, tag, makeEnsureDeps(process.cwd()));
+    const out: Record<string, unknown> = { pulled: `${image}:${landedTag}`, ok: true };
+    if (landedTag !== tag) { out.requestedTag = tag; out.pinnedTag = landedTag; }
+    process.stdout.write(`${JSON.stringify(out)}\n`);
     return EXIT.OK;
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.10.0] - 2026-07-07
+
+### Added
+
+- **Automatic fallback from an unpullable rolling tag to the newest immutable version — the
+  corp-proxy `latest` problem.** On the corp BART/Artifactory proxy a *mutable* tag (`latest`,
+  and the moving `dali_X.Y.Z`) can't be served from cache: the proxy must revalidate it against
+  ghcr.io on every pull, and that upstream round-trip fails over the restricted corporate egress.
+  An *immutable* `dali_X.Y.Z-<sha>` (the SAME image digest) never moves, so it is served straight
+  from cache — which is why `latest` fails there while a concrete `dali_2.5.28-<sha>` succeeds.
+  Now, when a rolling tag can't be pulled, the CLI resolves the newest **immutable** tag from the
+  registry, pulls it, and pins it to `.dali/config.json` (`imageTag`) so later renders reuse it.
+  This applies to BOTH `--pull` and a bare render (`docker run`'s implicit pull is pre-empted by
+  an explicit ensure step, so an agent that renders directly self-heals without running `--pull`
+  first). A no-op when the image is already local. An *immutable* tag failing is still surfaced as
+  a real error (no fallback). `--pull`'s JSON reports `requestedTag` + `pinnedTag` when it fell back.
+- `resolveImageRefAuto` now honors a `imageTag` pinned in `.dali/config.json` (an explicit
+  `--image-tag` still overrides it), so the pinned immutable tag is reused with no re-probe.
+
 ## [0.9.2] - 2026-07-07
 
 ### Fixed

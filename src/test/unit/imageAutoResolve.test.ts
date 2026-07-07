@@ -54,4 +54,24 @@ describe('cli resolveImageRefAuto (registry auto-detect + persist)', () => {
     const ref = await resolveImageRefAuto({ imageTag: 'dali_2.5.28' } as Args, dir, async () => BART);
     expect(ref.tag).to.equal('dali_2.5.28');
   });
+
+  it('honors a config-pinned imageTag (set by the corp-proxy fallback) when no --image-tag is given', async () => {
+    fs.mkdirSync(path.join(dir, '.dali'), { recursive: true });
+    fs.writeFileSync(
+      path.join(dir, '.dali', 'config.json'),
+      JSON.stringify({ image: BART, imageTag: 'dali_2.5.28-9d55242' }),
+    );
+    const ref = await resolveImageRefAuto({} as Args, dir, async () => BART);
+    expect(ref.tag).to.equal('dali_2.5.28-9d55242'); // reuses the pinned immutable, not 'latest'
+  });
+
+  it('lets an explicit --image-tag override a config-pinned imageTag', async () => {
+    fs.mkdirSync(path.join(dir, '.dali'), { recursive: true });
+    fs.writeFileSync(
+      path.join(dir, '.dali', 'config.json'),
+      JSON.stringify({ image: BART, imageTag: 'dali_2.5.28-9d55242' }),
+    );
+    const ref = await resolveImageRefAuto({ imageTag: 'latest' } as Args, dir, async () => BART);
+    expect(ref.tag).to.equal('latest');
+  });
 });

@@ -179,6 +179,91 @@ export async function listVersions(image: string, currentTag: string): Promise<V
 }
 
 /**
+ * A ROLLING tag — `latest` or a moving `dali_X.Y.Z` — can move on the registry. A caching proxy
+ * (the corp BART/Artifactory GHCR mirror) can't serve a mutable tag from cache: it must revalidate
+ * the tag against ghcr.io on every pull to check if it moved, and that upstream round-trip fails
+ * over the restricted corp egress. An immutable `dali_X.Y.Z-<sha>` never moves, so it is served
+ * straight from cache with no upstream call. See {@link pickFallbackTag}.
+ */
+export function isRollingTag(tag: string): boolean {
+    return tag === 'latest' || /^dali_\d+\.\d+\.\d+$/.test(tag);
+}
+
+/**
+ * When a rolling tag can't be pulled (e.g. `latest` fails on the corp proxy but the SAME image is
+ * available under an immutable tag), pick the best CONCRETE fallback from the registry's tag list.
+ * Prefer the newest IMMUTABLE `dali_X.Y.Z-<sha>` — the one the proxy reliably serves from cache,
+ * exactly the tag users pick manually. Only fall back to a moving `dali_X.Y.Z` (also mutable) when
+ * no immutable tag exists. Returns undefined when the list has no usable concrete tag. Pure.
+ */
+export function pickFallbackTag(tags: string[], failedTag: string): string | undefined {
+    const ver = (t: string): [number, number, number] | undefined => {
+        const m = /^dali_(\d+)\.(\d+)\.(\d+)/.exec(t);
+        return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : undefined;
+    };
+    const newest = (arr: string[]): string | undefined =>
+        arr.length === 0 ? undefined : [...arr].sort((a, b) => {
+            const [av, bv] = [ver(a)!, ver(b)!];
+            return bv[0] - av[0] || bv[1] - av[1] || bv[2] - av[2];
+        })[0];
+    const usable = tags.filter((t) => t !== failedTag && ver(t));
+    const immutable = usable.filter((t) => /^dali_\d+\.\d+\.\d+-[0-9a-f]{7,}$/.test(t));
+    const moving = usable.filter((t) => /^dali_\d+\.\d+\.\d+$/.test(t)); // dali_X.Y.Z (also mutable)
+    return newest(immutable) ?? newest(moving);
+}
+
+/** Injectable I/O for {@link pullWithFallback} / {@link ensureImageWithFallback} (so both are
+ *  unit-testable without docker or the network). */
+export interface EnsureDeps {
+    /** True if `<image>:<tag>` is already in the local docker store (docker run won't re-pull). */
+    hasLocal: (image: string, tag: string) => Promise<boolean>;
+    /** Pull `<image>:<tag>` (rejects on failure). */
+    pull: (image: string, tag: string) => Promise<PullResult>;
+    /** List the registry's remote tags (for choosing a fallback). */
+    listTags: (image: string) => Promise<string[]>;
+    /** Persist the chosen fallback tag so subsequent renders reuse it (best-effort). */
+    persistTag?: (tag: string) => void;
+    /** Emit a human note (to STDERR — stdout is the JSON contract). */
+    warn?: (message: string) => void;
+}
+
+/**
+ * Pull `<image>:<tag>`, self-healing a rolling tag a caching proxy can't serve. On the corp
+ * BART/Artifactory proxy a MUTABLE tag (`latest` or a moving `dali_X.Y.Z`) fails because the proxy
+ * must revalidate it against ghcr.io on every pull and that upstream call fails over the restricted
+ * egress; an immutable `dali_X.Y.Z-<sha>` is served straight from cache. So when a ROLLING tag
+ * fails, fall back to the newest IMMUTABLE tag ({@link pickFallbackTag}), pull + pin it, and return
+ * the tag that actually landed. An immutable tag failing is a real error (rethrown, no fallback).
+ */
+export async function pullWithFallback(image: string, tag: string, deps: EnsureDeps): Promise<string> {
+    try {
+        await deps.pull(image, tag);
+        return tag;
+    } catch (err) {
+        if (!isRollingTag(tag)) { throw err; }
+        const fallback = pickFallbackTag(await deps.listTags(image), tag);
+        if (!fallback) { throw err; }
+        deps.warn?.(
+            `'${tag}' could not be pulled (common for a moving tag on a caching proxy); ` +
+            `falling back to the pinned version '${fallback}'.`,
+        );
+        await deps.pull(image, fallback);
+        deps.persistTag?.(fallback);
+        return fallback;
+    }
+}
+
+/**
+ * Ensure `<image>:<tag>` is available for a render: a no-op if it is already local (docker run will
+ * use it), otherwise {@link pullWithFallback}. Returns the tag that is actually available (may
+ * differ from a requested rolling tag when the proxy forced an immutable fallback).
+ */
+export async function ensureImageWithFallback(image: string, tag: string, deps: EnsureDeps): Promise<string> {
+    if (await deps.hasLocal(image, tag)) { return tag; }
+    return pullWithFallback(image, tag, deps);
+}
+
+/**
  * Pull `<image>:<tag>` via `docker pull`, streaming docker's own progress to
  * STDERR (stdout is reserved for the CLI's JSON contract). Resolves to
  * `{ ref, ok: true }` on a clean exit 0; rejects with a clear Error on a non-zero
