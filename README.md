@@ -98,7 +98,7 @@ npx -y github:dalihub/dali-ui-preview-cli <input.cpp> --image out.png
 git clone https://github.com/dalihub/dali-ui-preview-cli
 cd dali-ui-preview-cli
 npm install
-npm run build
+npm run compile
 node out/cli.js <input.cpp>
 # optional: expose it on your PATH as `dali-ui-preview-cli`
 npm link

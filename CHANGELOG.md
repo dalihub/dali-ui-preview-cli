@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.10.2] - 2026-07-07
+
+### Fixed
+
+- **`npm i -g github:dalihub/dali-ui-preview-cli` now installs a working CLI instead of a broken
+  symlink.** After 0.10.1 removed the `prepare` build hook, npm still refused to install cleanly:
+  the command printed `added N packages` and exited 0, but `dali-ui-preview-cli` was then
+  `command not found`. Root cause: the package.json had a top-level **`build`** script. npm treats
+  a git-installed package that has `scripts.build` as a build-from-source checkout, and under the
+  default `install-links=false` it *links* the transient git clone into the global `node_modules`
+  rather than packing it — so once npm cleans the clone, the global `bin` symlink dangles. The
+  `build` script is renamed to **`compile`** (all internal/CI/hook/README references updated), which
+  avoids the heuristic entirely. The documented one-liner now yields a runnable CLI on a clean
+  machine (npm 10 & 11) with no flags. A `scripts["//"]` note guards against re-adding `build`.
+
 ## [0.10.1] - 2026-07-07
 
 ### Fixed

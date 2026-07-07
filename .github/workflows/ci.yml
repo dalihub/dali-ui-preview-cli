@@ -22,7 +22,7 @@ jobs:
         run: npm ci
 
       - name: Build
-        run: npm run build
+        run: npm run compile
 
       - name: Test
         run: npm test
@@ -44,5 +44,5 @@ jobs:
 #     runs-on: [self-hosted, docker]
 #     steps:
 #       - uses: actions/checkout@v4
-#       - run: npm ci && npm run build
+#       - run: npm ci && npm run compile
 #       - run: node out/cli.js samples/hello-dali.preview.dali.cpp --image /tmp/out.png

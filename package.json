@@ -1,6 +1,6 @@
 {
   "name": "dali-ui-preview-cli",
-  "version": "0.10.1",
+  "version": "0.10.2",
   "description": "CLI that renders Tizen DALi UI C++ to a PNG and emits a JSON node tree for humans and AI agents.",
   "bin": {
     "dali-ui-preview-cli": "out/cli.js"
@@ -39,14 +39,15 @@
     "url": "https://github.com/dalihub/dali-ui-preview-cli"
   },
   "scripts": {
-    "build": "tsc -p ./",
+    "//": "DO NOT add a top-level 'build' script. npm treats a git-installed package that has scripts.build as a build-from-source checkout and, under the default install-links=false, links the transient git clone into the global node_modules instead of packing it — leaving a dangling symlink so `npm i -g github:dalihub/dali-ui-preview-cli` silently produces a broken CLI (command not found). We ship a prebuilt out/ and compile via 'compile' instead.",
+    "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
-    "prepublishOnly": "npm run build",
-    "pretest": "npm run build",
+    "prepublishOnly": "npm run compile",
+    "pretest": "npm run compile",
     "test": "npm run test:unit",
     "test:unit": "c8 mocha out/test/unit/**/*.test.js --timeout 10000",
-    "test:e2e:local": "npm run build && bash tests/e2e/render-modes.sh local",
-    "test:e2e:docker": "npm run build && bash tests/e2e/render-modes.sh docker"
+    "test:e2e:local": "npm run compile && bash tests/e2e/render-modes.sh local",
+    "test:e2e:docker": "npm run compile && bash tests/e2e/render-modes.sh docker"
   },
   "dependencies": {
     "pngjs": "^7.0.0",
