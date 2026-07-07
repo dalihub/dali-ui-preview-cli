@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.8.1] - 2026-07-07
+
+### Changed
+
+- **Verified compatible with the new dali-ui `v2.5.28` runtime** (`latest` now tracks
+  `dali_2.5.28`). The CLI harness compiles and renders unchanged on 2.5.28 — it only ever
+  emitted `UiConfig::New().Apply()` (never the removed `SetAlwaysShowFocus`), so the
+  breaking change that hit the VS Code extension's focus harness did not affect the CLI.
+  Docs updated to reference `dali_2.5.28`. (The extension's focus-ring harness was migrated
+  separately; see the extension changelog.)
+
 ## [0.8.0] - 2026-07-06
 
 ### Changed
