@@ -28,7 +28,15 @@ LLM coding agents can write UI code, but they can't *see* whether it looks right
 
 ## Prerequisites
 
-- **Node.js >= 18** (to run the CLI itself), plus **one runtime** (below).
+- **Linux (x86-64) only.** The CLI shells out to a Linux Docker runtime image (or a native
+  DALi build + `g++`/`Xvfb`), so it does not run on macOS or Windows natively — invoking it
+  there stops immediately with exit `14` and a hint. **On Windows, run it inside WSL2
+  (Ubuntu)** with Docker available (WSL2 reports as `linux`, so everything below applies); on
+  macOS use a Linux VM or a remote Linux host. (Verify any host by running `doctor` there.)
+- **Node.js 18 LTS recommended** to run the CLI itself. (18 is the declared `engines` floor —
+  a supported-LTS policy, not a hard technical requirement; the code targets ES2020 and uses
+  no Node-18-only APIs, so older 14+ runtimes will likely work but are unsupported.) You also
+  need **git** (the GitHub-clone install clones + builds the repo).
 - **Docker** (the default runtime), usable by your user — the render preflight runs `docker info`. The runtime image **auto-pulls on the first render** (~290 MB; DALi Toolkit + Xvfb for off-screen rendering). The **registry auto-detects**: inside the Samsung network the BART GHCR proxy `ghcr-docker-remote.bart.sec.samsung.net/lwc0917/dali-preview-runtime` (avoids intermittent GHCR pull drops), otherwise `ghcr.io/lwc0917/dali-preview-runtime` — same repo path, so tags/digests match. The pull prints which server it comes from. Override with `--runtime-image`, `DALI_PREVIEW_IMAGE`, or the `image` key in `.dali/config.json` (written by `init`).
 
 > **Shared with the DALi Preview VS Code extension.** In Docker mode this CLI uses the *same* runtime image and the *same* named volumes (`dali-preview-ccache`, `dali-preview-shader-cache`) as the DALi Preview VS Code extension. If you already use the extension, the image and warm build caches are reused — no extra download, faster renders, and updating the image once benefits both.
@@ -67,7 +75,7 @@ Selection precedence (highest first): `--runtime` / `--local` flag → `DALI_PRE
 
 This CLI is distributed **straight from the GitHub repo** — it is intentionally **not
 published to npm**. Every command below installs/runs it from `dalihub/dali-ui-preview-cli`,
-which `npm`/`npx` clone and build for you (Node 18+ required).
+which `npm`/`npx` clone and build for you (**Linux only**; Node 18 LTS recommended + git — see [Prerequisites](#prerequisites)).
 
 **Install once (recommended)** — puts `dali-ui-preview-cli` on your `PATH`, so the render
 loop is fast (no re-clone per render) and nothing temporary piles up:
@@ -477,6 +485,7 @@ Note: DALi inserts internal `CameraActor` siblings (zero-area boxes); `--at`/`--
 | `11` | Render / capture error. |
 | `12` | Docker unavailable (the `docker info` preflight failed). |
 | `13` | No usable runtime — from a render: `--runtime local` was selected but a DALi prefix / `g++` / `Xvfb` / `pkg-config` is missing; from `doctor`: neither runtime is ready. |
+| `14` | Unsupported host OS (not Linux) — run under WSL2 (Windows) or a Linux host. `--version`/`--help` still work anywhere. |
 | `20` | Verify diff mismatch (rendered, but diverged from the baseline). |
 
 `doctor` exits `0` when a runtime is ready and `13` when none is (its JSON report prints on stdout either way).

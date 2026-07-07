@@ -64,9 +64,29 @@ const EXIT = {
   DOCKER_UNAVAILABLE: 12,
   /** Selected local runtime unavailable (missing DALi prefix / g++ / Xvfb / pkg-config). */
   RUNTIME_UNAVAILABLE: 13,
+  /** Host OS can't run the CLI at all (not Linux) — see {@link unsupportedPlatformMessage}. */
+  UNSUPPORTED_PLATFORM: 14,
   /** Diff mismatch — the verify verdict diverged (M4; set by verdictExitCode). */
   DIFF_MISMATCH: 20,
 } as const;
+
+/**
+ * The CLI runs on **Linux only** — it shells out to a Linux Docker runtime image (or a
+ * native DALi build) and, in local mode, to `g++`/`Xvfb`. Returns a human-readable error
+ * message for platforms that can't work, or `null` for Linux (incl. WSL2, which reports
+ * `linux`). Pure so it is unit-tested without touching `process`. `--version`/`--help` are
+ * exempt (they run anywhere) so a curious mac/Windows user can still inspect the tool.
+ */
+export function unsupportedPlatformMessage(platform: string): string | null {
+  if (platform === 'linux') { return null; }
+  const hint = platform === 'win32'
+    ? 'On Windows, run it inside WSL2 (Ubuntu) with Docker available.'
+    : 'On macOS, run it in a Linux VM or on a remote Linux host.';
+  return (
+    `dali-ui-preview-cli runs on Linux (x86-64) only — detected platform "${platform}".\n` +
+    `${hint}\nSee the README "Prerequisites" section.`
+  );
+}
 
 /** The two `--theme` values; each maps to a DALi background color (F5.1). */
 type Theme = 'dark' | 'light';
@@ -1273,6 +1293,15 @@ async function main(argv: string[]): Promise<number> {
   if (argv.includes('--help') || argv.includes('-h')) {
     process.stdout.write(`${USAGE}\n`);
     return 0;
+  }
+
+  // Hard-stop on a non-Linux host (mac/Windows-native): every render path needs a Linux
+  // Docker runtime or native g++/Xvfb, so fail fast with actionable guidance instead of a
+  // confusing downstream docker/xvfb error. WSL2 reports `linux`, so it passes through.
+  const platformError = unsupportedPlatformMessage(process.platform);
+  if (platformError) {
+    console.error(platformError);
+    return EXIT.UNSUPPORTED_PLATFORM;
   }
 
   // `init` — seed the current project (AGENTS.md + Claude skill) + pull image so a

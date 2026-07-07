@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.9.1] - 2026-07-07
+
+### Added
+
+- **Fail fast on an unsupported host OS.** The CLI runs on **Linux (x86-64) only** (it shells
+  out to a Linux Docker runtime, or native `g++`/`Xvfb`). On a non-Linux host it now stops
+  immediately with a clear message and **exit `14`** instead of a confusing downstream
+  docker/Xvfb error. `--version`/`--help` still work anywhere. **WSL2 reports as `linux`, so
+  Windows-via-WSL2 is unaffected.** (Pure `unsupportedPlatformMessage()` guard, unit-tested.)
+
+### Docs
+
+- **Prerequisites corrected and made explicit (README EN/KO).** States Linux-only up front,
+  documents **Windows → WSL2 (Ubuntu) + Docker**, and fixes the Node wording: **Node 18 LTS is
+  recommended**, not a hard requirement — it's the declared `engines` floor (supported-LTS
+  policy); the code targets ES2020 and uses no Node-18-only APIs, so 14+ likely works but is
+  unsupported. Also notes **git** is needed for the GitHub-clone install. Exit-code tables now
+  list `14`.
+
 ## [0.9.0] - 2026-07-07
 
 ### Changed
