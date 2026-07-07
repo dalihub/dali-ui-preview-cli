@@ -1,6 +1,6 @@
 {
   "name": "dali-ui-preview-cli",
-  "version": "0.10.0",
+  "version": "0.10.1",
   "description": "CLI that renders Tizen DALi UI C++ to a PNG and emits a JSON node tree for humans and AI agents.",
   "bin": {
     "dali-ui-preview-cli": "out/cli.js"
@@ -46,8 +46,7 @@
     "test": "npm run test:unit",
     "test:unit": "c8 mocha out/test/unit/**/*.test.js --timeout 10000",
     "test:e2e:local": "npm run build && bash tests/e2e/render-modes.sh local",
-    "test:e2e:docker": "npm run build && bash tests/e2e/render-modes.sh docker",
-    "prepare": "npm run build"
+    "test:e2e:docker": "npm run build && bash tests/e2e/render-modes.sh docker"
   },
   "dependencies": {
     "pngjs": "^7.0.0",

@@ -75,7 +75,7 @@ Selection precedence (highest first): `--runtime` / `--local` flag → `DALI_PRE
 
 This CLI is distributed **straight from the GitHub repo** — it is intentionally **not
 published to npm**. Every command below installs/runs it from `dalihub/dali-ui-preview-cli`,
-which `npm`/`npx` clone and build for you (**Linux only**; Node 18 LTS recommended + git — see [Prerequisites](#prerequisites)).
+which `npm`/`npx` clone for you. The compiled JS is **committed**, so installing needs **no build step and no build toolchain** (no `tsc`/devDependencies) — it works even where the corporate npm omits devDependencies (**Linux only**; Node 18 LTS recommended + git — see [Prerequisites](#prerequisites)).
 
 **Install once (recommended)** — puts `dali-ui-preview-cli` on your `PATH`, so the render
 loop is fast (no re-clone per render) and nothing temporary piles up:

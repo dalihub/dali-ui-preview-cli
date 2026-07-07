@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.10.1] - 2026-07-07
+
+### Fixed
+
+- **`npm i -g github:dalihub/dali-ui-preview-cli` no longer fails with `tsc: not found` on the
+  corp network.** The package built itself on install via a `prepare` → `tsc` step, which
+  needs the `typescript` **devDependency** — but the corporate npm installs with
+  `omit=dev`/production, so `tsc` was absent and the install died (agents then fell back to a
+  manual `git clone` + build). The compiled output (`out/`) is now **committed to the repo**
+  and the install-time build hook (`prepare`) is **removed**, so a GitHub-clone install needs
+  **no build step and no build toolchain** — only the two runtime deps (`pngjs`, `pixelmatch`).
+  Verified: a `--omit=dev` install runs `--version` with no `tsc` present. A `.githooks/pre-commit`
+  rebuilds `out/` when `src/` changes so the committed output never drifts (enable with
+  `git config core.hooksPath .githooks`).
+
 ## [0.10.0] - 2026-07-07
 
 ### Added

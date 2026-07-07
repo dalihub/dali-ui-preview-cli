@@ -69,7 +69,7 @@ dali-ui-preview-cli app.preview.dali.cpp --image out.png
 ## 설치
 
 이 CLI는 **GitHub repo에서 바로** 설치합니다 — 의도적으로 **npm에는 퍼블리시하지 않습니다.** 아래 명령은 모두
-`dalihub/dali-ui-preview-cli`에서 설치/실행하며, `npm`/`npx`가 알아서 클론하고 빌드합니다(**Linux 전용**; Node 18 LTS 권장 + git — [사전 준비](#사전-준비) 참고).
+`dalihub/dali-ui-preview-cli`에서 설치/실행하며, `npm`/`npx`가 알아서 클론합니다. 컴파일된 JS가 **깃에 커밋돼 있어** 설치 시 **빌드 단계도, 빌드 도구(`tsc`/devDependencies)도 필요 없습니다** — 사내 npm이 devDependencies를 빼도(omit=dev) 설치됩니다(**Linux 전용**; Node 18 LTS 권장 + git — [사전 준비](#사전-준비) 참고).
 
 **한 번 설치(권장)** — `dali-ui-preview-cli`를 PATH에 올려 렌더 루프를 빠르게(렌더마다 재클론 없음), 임시 파일도 안 쌓입니다:
 

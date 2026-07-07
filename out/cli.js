@@ -1,0 +1,1340 @@
+#!/usr/bin/env node
+"use strict";
+/*
+ * dali-ui-preview-cli CLI entrypoint.
+ *
+ * Default command (M1): `dali-ui-preview-cli <input> [--image <out.png>]` resolves
+ * the preview code from <input> — a FILE path, a code block on STDIN (when
+ * <input> is `-` or stdin is piped), or an inline `--code "<text>"` block —
+ * templates the DALi harness, renders it inside the runtime container, ALWAYS
+ * prints the canonical scene tree as JSON to stdout, and (only when `--image` is
+ * given) copies the produced PNG to <out.png>. `--image` is OPTIONAL (Inv-6):
+ * passing it writes the PNG but does NOT change stdout.
+ *
+ * Logging convention (project CLAUDE.md, adapted for a CLI): there is no vscode
+ * outputChannel here, and stdout is RESERVED for the machine contract (the JSON
+ * node tree, and `--version`/`--help` text). All diagnostics go to stderr via
+ * console.error so a caller can pipe stdout straight into a JSON parser.
+ */
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.unsupportedPlatformMessage = unsupportedPlatformMessage;
+exports.parseRenderArgs = parseRenderArgs;
+exports.resolveRenderConfig = resolveRenderConfig;
+exports.resolveImageRefAuto = resolveImageRefAuto;
+exports.attachMeta = attachMeta;
+exports.mapRenderError = mapRenderError;
+const fs = __importStar(require("fs"));
+const path = __importStar(require("path"));
+const inputResolver_1 = require("./inputResolver");
+const harnessTemplater_1 = require("./harnessTemplater");
+const dockerRunner_1 = require("./dockerRunner");
+const render_1 = require("./render");
+const config_1 = require("./runtime/config");
+const localRunner_1 = require("./runtime/localRunner");
+const imageManager_1 = require("./imageManager");
+const registryClient_1 = require("./registryClient");
+const sliceBuilder_1 = require("./sliceBuilder");
+const sliceSources_1 = require("./sliceSources");
+const registry_1 = require("./registry");
+const runtimeVersion_1 = require("./runtimeVersion");
+const treeModel_1 = require("./treeModel");
+const errorParser_1 = require("./errorParser");
+const treeQuery_1 = require("./treeQuery");
+const overlayRenderer_1 = require("./overlayRenderer");
+const treeFormatter_1 = require("./formatters/treeFormatter");
+const reportFormatter_1 = require("./formatters/reportFormatter");
+const treeTruncate_1 = require("./treeTruncate");
+const watch_1 = require("./watch");
+const imageDiff_1 = require("./diff/imageDiff");
+const treeDiff_1 = require("./diff/treeDiff");
+const verdict_1 = require("./diff/verdict");
+/**
+ * Process exit codes (M5/F5.4). Distinct per failure phase so a caller can branch
+ * on `$?` without parsing stderr. 0/1/20 are the pre-M5 contract (kept); 10/11/12
+ * split the former blanket "1" for a render failure into compile / render /
+ * docker-unavailable.
+ */
+const EXIT = {
+    /** Success. */
+    OK: 0,
+    /** Usage / arg error, or empty input. */
+    USAGE: 1,
+    /** Compile error in the user's code (RenderError, phase 'compile'). */
+    COMPILE_ERROR: 10,
+    /** Render / capture error (RenderError, phase 'render'). */
+    RENDER_ERROR: 11,
+    /** Docker unavailable (the `docker info` preflight failed). */
+    DOCKER_UNAVAILABLE: 12,
+    /** Selected local runtime unavailable (missing DALi prefix / g++ / Xvfb / pkg-config). */
+    RUNTIME_UNAVAILABLE: 13,
+    /** Host OS can't run the CLI at all (not Linux) — see {@link unsupportedPlatformMessage}. */
+    UNSUPPORTED_PLATFORM: 14,
+    /** Diff mismatch — the verify verdict diverged (M4; set by verdictExitCode). */
+    DIFF_MISMATCH: 20,
+};
+/**
+ * The CLI runs on **Linux only** — it shells out to a Linux Docker runtime image (or a
+ * native DALi build) and, in local mode, to `g++`/`Xvfb`. Returns a human-readable error
+ * message for platforms that can't work, or `null` for Linux (incl. WSL2, which reports
+ * `linux`). Pure so it is unit-tested without touching `process`. `--version`/`--help` are
+ * exempt (they run anywhere) so a curious mac/Windows user can still inspect the tool.
+ */
+function unsupportedPlatformMessage(platform) {
+    if (platform === 'linux') {
+        return null;
+    }
+    const hint = platform === 'win32'
+        ? 'On Windows, run it inside WSL2 (Ubuntu) with Docker available.'
+        : 'On macOS, run it in a Linux VM or on a remote Linux host.';
+    return (`dali-ui-preview-cli runs on Linux (x86-64) only — detected platform "${platform}".\n` +
+        `${hint}\nSee the README "Prerequisites" section.`);
+}
+/** Default LOGICAL render resolution (device pixels = these × dpr). TV FHD —
+ *  DALi UI apps target the TV; override per render with `--resolution WxH`. */
+const DEFAULT_RESOLUTION = { w: 1920, h: 1080 };
+/** Default theme (the pre-M5 black background). */
+const DEFAULT_THEME = 'dark';
+/** Default device-pixel ratio. */
+const DEFAULT_DPR = 1;
+const USAGE = 'Usage: dali-ui-preview-cli <input.cpp | -> [--image <out.png>]\n' +
+    '       dali-ui-preview-cli --code "<dali ui code>" [--image <out.png>]\n' +
+    '       cat input.cpp | dali-ui-preview-cli [--image <out.png>]\n' +
+    '       dali-ui-preview-cli <input.cpp> --format tree         (print a box-drawing tree instead of JSON)\n' +
+    '       dali-ui-preview-cli <input.cpp> --report <out.html|.md> (write a self-contained report)\n' +
+    '       dali-ui-preview-cli <input.cpp> --max-depth N | --max-nodes N (bound the stdout JSON)\n' +
+    '       dali-ui-preview-cli <input.cpp> --overlay <out.png>   (write a Set-of-Mark annotated PNG)\n' +
+    '       dali-ui-preview-cli <input.cpp> --at X,Y              (print the topmost node at a pixel)\n' +
+    '       dali-ui-preview-cli <input.cpp> --node <id>           (print that node id\'s region)\n' +
+    '       dali-ui-preview-cli <input.cpp> --watch               (re-render on file change; FILE input only)\n' +
+    '       dali-ui-preview-cli <input.cpp> --baseline <png> [--baseline-tree <json>] [--threshold <ratio>]\n' +
+    '                                                              (verify the render; print a verdict, exit 0 match / 20 diverged)\n' +
+    '       dali-ui-preview-cli <input.cpp> --update-baseline --baseline <png> [--baseline-tree <json>]\n' +
+    '                                                              (write the current render as the new baseline; exit 0)\n' +
+    '       dali-ui-preview-cli <input.cpp> --resolution WxH       (render size, default 1920x1080)\n' +
+    '       dali-ui-preview-cli <input.cpp> --theme dark|light     (background theme, default dark)\n' +
+    '       dali-ui-preview-cli <input.cpp> --dpr N                (device-pixel ratio, default 1)\n' +
+    '       dali-ui-preview-cli <input.cpp> --image-tag <tag>      (runtime image tag for THIS render, default latest)\n' +
+    '       dali-ui-preview-cli <input.cpp> --image <name>         (override the runtime image name; advanced)\n' +
+    '       dali-ui-preview-cli <input.cpp> --runtime docker|local (render backend; default docker)\n' +
+    '       dali-ui-preview-cli <input.cpp> --local                (shorthand for --runtime local)\n' +
+    '       dali-ui-preview-cli <input.cpp> --dali-prefix <path>   (native DALi install for --runtime local)\n' +
+    '       dali-ui-preview-cli --list-versions                    (list runtime image versions as JSON; exit 0)\n' +
+    '       dali-ui-preview-cli --pull [<tag>]                     (pull a runtime image tag, default latest)\n' +
+    '       dali-ui-preview-cli init [<dir>]                       (set up a project so a coding agent verifies DALi UI in its loop)\n' +
+    '       dali-ui-preview-cli doctor                             (print an environment-readiness report as JSON; exit 0 ready / 13 no runtime)\n' +
+    '   (or --version | --help)\n' +
+    '\n' +
+    'Reads preview code from a file, from STDIN (a `-` positional or a piped\n' +
+    'code block), or from an inline --code block, and prints the scene-tree JSON\n' +
+    'to stdout. --image is optional; passing it also writes the rendered PNG.\n' +
+    '--format tree prints a human box-drawing tree instead of JSON; --max-depth /\n' +
+    '--max-nodes bound the JSON for token-limited callers. --report writes an HTML\n' +
+    '(.html) or Markdown (.md) report and still prints the JSON tree to stdout.\n' +
+    '--at/--node print ONLY their lookup JSON (a bare render prints the full tree);\n' +
+    'they are mutually exclusive. --overlay writes an annotated PNG and is\n' +
+    'orthogonal to stdout (the full tree is still printed unless a query flag is set).\n' +
+    '--watch requires a FILE input (not stdin / --code).\n' +
+    '--baseline / --baseline-tree VERIFY the render: stdout becomes a single verdict\n' +
+    'JSON (image-diff and/or id-keyed tree-diff vs the baseline) and the exit code is\n' +
+    '0 when it matches or 20 when it diverges (1 stays a tool error). --update-baseline\n' +
+    '(needs --baseline) instead writes the current render as the new baseline(s).\n' +
+    '--resolution WxH sets the logical render size (default 1920x1080); --theme dark|light\n' +
+    'picks the background color (default dark); --dpr N (default 1) multiplies the render\n' +
+    'dimensions by N device pixels. The effective {resolution,theme,dpr} are echoed on the\n' +
+    'stdout tree as root.meta.\n' +
+    '\n' +
+    'Run `doctor` BEFORE rendering to check the environment: it prints\n' +
+    '{schemaVersion,ready,recommended,configured,runtimes:{docker,local}} JSON to stdout\n' +
+    '(no network) and exits 0 when a runtime is ready or 13 when none is — so you can gate\n' +
+    'a render with `doctor && render`. Each runtime carries actionable `issues` to relay.\n' +
+    '\n' +
+    'Runtime versions track DALi releases (e.g. dali_2.5.18), plus the rolling `latest`.\n' +
+    '--list-versions prints the available runtime image versions (remote ∪ local, each\n' +
+    'marked local/current) as JSON; --pull [<tag>] downloads a tag (default latest);\n' +
+    '--image-tag <tag> selects the tag for THIS render (default latest); --image <name>\n' +
+    'overrides the runtime image name. --list-versions / --pull do NOT render.\n' +
+    '\n' +
+    'Exit codes: 0 ok; 1 usage error or empty input; 10 compile error (in your code);\n' +
+    '11 render/capture error; 12 docker unavailable; 20 verify diff mismatch.\n' +
+    'A compile/render failure prints a JSON {phase,message,sourceLine} to stderr.';
+/**
+ * Read the package version at runtime.
+ *
+ * We read + parse package.json rather than `import pkg from '../package.json'`
+ * because package.json lives outside tsconfig's `rootDir` ("src"); importing it
+ * as a module would pull it under the compilation root and break the build.
+ * The compiled entry is `out/cli.js`, so package.json sits one directory up.
+ */
+function readVersion() {
+    const pkgPath = path.join(__dirname, '..', 'package.json');
+    const raw = fs.readFileSync(pkgPath, 'utf8');
+    const pkg = JSON.parse(raw);
+    if (typeof pkg.version !== 'string' || pkg.version.length === 0) {
+        throw new Error('version field missing from package.json');
+    }
+    return pkg.version;
+}
+/**
+ * Parse + validate a non-negative integer flag value (`--max-depth`/`--max-nodes`).
+ * Throws a clear Error when the value is missing or not a base-10 non-negative
+ * integer, so the caller surfaces a usage diagnostic on stderr.
+ */
+function parseCountFlag(flag, value) {
+    if (value === undefined || !/^\d+$/.test(value)) {
+        throw new Error(`${flag} requires a non-negative integer argument.`);
+    }
+    return parseInt(value, 10);
+}
+/**
+ * Parse + validate a `--threshold` ratio: a finite number in [0,1]. Throws a clear
+ * Error when missing or out of range so the caller surfaces a usage diagnostic on
+ * stderr. Accepts forms like `0`, `0.01`, `.5`, `1`.
+ */
+function parseRatioFlag(flag, value) {
+    if (value === undefined || !/^\d*\.?\d+$/.test(value)) {
+        throw new Error(`${flag} requires a number between 0 and 1.`);
+    }
+    const n = parseFloat(value);
+    if (!Number.isFinite(n) || n < 0 || n > 1) {
+        throw new Error(`${flag} requires a number between 0 and 1.`);
+    }
+    return n;
+}
+/**
+ * Parse + validate a `--resolution WxH` value into positive integer logical
+ * dimensions (e.g. `800x480` → `{w:800,h:480}`). Accepts a lowercase or uppercase
+ * `x` separator. Throws a clear usage Error when malformed or non-positive.
+ */
+function parseResolutionFlag(value) {
+    const m = value !== undefined ? /^(\d+)[xX](\d+)$/.exec(value) : null;
+    if (m === null) {
+        throw new Error('--resolution requires a WxH value (e.g. 800x480).');
+    }
+    const w = parseInt(m[1], 10);
+    const h = parseInt(m[2], 10);
+    if (w <= 0 || h <= 0) {
+        throw new Error('--resolution width and height must be positive (e.g. 800x480).');
+    }
+    return { w, h };
+}
+/**
+ * Parse + validate a `--dpr N` value: a finite, positive number (integer or
+ * decimal, e.g. `1`, `2`, `1.5`). Throws a clear usage Error otherwise.
+ */
+function parseDprFlag(value) {
+    if (value === undefined || !/^\d*\.?\d+$/.test(value)) {
+        throw new Error('--dpr requires a positive number (e.g. 1, 2, 1.5).');
+    }
+    const n = parseFloat(value);
+    if (!Number.isFinite(n) || n <= 0) {
+        throw new Error('--dpr requires a positive number (e.g. 1, 2, 1.5).');
+    }
+    return n;
+}
+/**
+ * Parse the default-command arguments: an optional positional `<input>` (a file
+ * path or `-` for stdin), an optional inline `--code <text>` (mutually exclusive
+ * with the positional input), an optional `--image <path>`, and the M2 image↔tree
+ * flags `--overlay <png>` (write a Set-of-Mark annotated PNG), `--at X,Y` (query
+ * the node at a pixel) and `--node <id>` (query a node's region). Unknown flags,
+ * duplicate/missing flag values, a malformed `--at` value, supplying BOTH a
+ * positional input and `--code`, or supplying BOTH `--at` and `--node` throw so the
+ * caller can surface a clear diagnostic on stderr.
+ *
+ * Note: `--image`/`--overlay` are intentionally NOT required here. Whether an input
+ * source was supplied at all is decided in {@link runRender} (which also considers
+ * piped stdin), so a bare `dali-ui-preview-cli` with a pipe is valid.
+ */
+function parseRenderArgs(argv) {
+    let input;
+    let code;
+    let imageOut;
+    let overlayOut;
+    let at;
+    let nodeId;
+    let format;
+    let reportOut;
+    let maxDepth;
+    let maxNodes;
+    let watch = false;
+    let baseline;
+    let baselineTree;
+    let updateBaseline = false;
+    let threshold;
+    let resolution;
+    let theme;
+    let dpr;
+    let imageTag;
+    let image;
+    let listVersions = false;
+    let pull;
+    let runtime;
+    let daliPrefix;
+    for (let i = 0; i < argv.length; i++) {
+        const arg = argv[i];
+        if (arg === '--image') {
+            const value = argv[i + 1];
+            if (value === undefined || value.startsWith('-')) {
+                throw new Error('--image requires a path argument.');
+            }
+            if (imageOut !== undefined) {
+                throw new Error('--image was specified more than once.');
+            }
+            imageOut = value;
+            i++; // consume the value
+        }
+        else if (arg === '--overlay') {
+            const value = argv[i + 1];
+            if (value === undefined || value.startsWith('-')) {
+                throw new Error('--overlay requires a path argument.');
+            }
+            if (overlayOut !== undefined) {
+                throw new Error('--overlay was specified more than once.');
+            }
+            overlayOut = value;
+            i++; // consume the value
+        }
+        else if (arg === '--at') {
+            const value = argv[i + 1];
+            if (value === undefined || !/^-?\d+,-?\d+$/.test(value)) {
+                throw new Error('--at requires X,Y integer pixel coordinates.');
+            }
+            if (at !== undefined) {
+                throw new Error('--at was specified more than once.');
+            }
+            const [xStr, yStr] = value.split(',');
+            at = { x: parseInt(xStr, 10), y: parseInt(yStr, 10) };
+            i++; // consume the value
+        }
+        else if (arg === '--node') {
+            const value = argv[i + 1];
+            // The id is a structural child-index path (e.g. "0/1/0") so it never starts
+            // with '-'; reject a genuinely missing value or a leading-dash one.
+            if (value === undefined || value.startsWith('-')) {
+                throw new Error('--node requires an id argument.');
+            }
+            if (nodeId !== undefined) {
+                throw new Error('--node was specified more than once.');
+            }
+            nodeId = value;
+            i++; // consume the value
+        }
+        else if (arg === '--format') {
+            const value = argv[i + 1];
+            if (value !== 'tree' && value !== 'json') {
+                throw new Error("--format requires a value of 'tree' or 'json'.");
+            }
+            if (format !== undefined) {
+                throw new Error('--format was specified more than once.');
+            }
+            format = value;
+            i++; // consume the value
+        }
+        else if (arg === '--report') {
+            const value = argv[i + 1];
+            if (value === undefined || value.startsWith('-')) {
+                throw new Error('--report requires a path argument.');
+            }
+            if (reportOut !== undefined) {
+                throw new Error('--report was specified more than once.');
+            }
+            reportOut = value;
+            i++; // consume the value
+        }
+        else if (arg === '--max-depth') {
+            if (maxDepth !== undefined) {
+                throw new Error('--max-depth was specified more than once.');
+            }
+            maxDepth = parseCountFlag('--max-depth', argv[i + 1]);
+            i++; // consume the value
+        }
+        else if (arg === '--max-nodes') {
+            if (maxNodes !== undefined) {
+                throw new Error('--max-nodes was specified more than once.');
+            }
+            maxNodes = parseCountFlag('--max-nodes', argv[i + 1]);
+            i++; // consume the value
+        }
+        else if (arg === '--watch') {
+            watch = true;
+        }
+        else if (arg === '--baseline') {
+            const value = argv[i + 1];
+            if (value === undefined || value.startsWith('-')) {
+                throw new Error('--baseline requires a path argument.');
+            }
+            if (baseline !== undefined) {
+                throw new Error('--baseline was specified more than once.');
+            }
+            baseline = value;
+            i++; // consume the value
+        }
+        else if (arg === '--baseline-tree') {
+            const value = argv[i + 1];
+            if (value === undefined || value.startsWith('-')) {
+                throw new Error('--baseline-tree requires a path argument.');
+            }
+            if (baselineTree !== undefined) {
+                throw new Error('--baseline-tree was specified more than once.');
+            }
+            baselineTree = value;
+            i++; // consume the value
+        }
+        else if (arg === '--update-baseline') {
+            updateBaseline = true;
+        }
+        else if (arg === '--threshold') {
+            if (threshold !== undefined) {
+                throw new Error('--threshold was specified more than once.');
+            }
+            threshold = parseRatioFlag('--threshold', argv[i + 1]);
+            i++; // consume the value
+        }
+        else if (arg === '--resolution') {
+            if (resolution !== undefined) {
+                throw new Error('--resolution was specified more than once.');
+            }
+            resolution = parseResolutionFlag(argv[i + 1]);
+            i++; // consume the value
+        }
+        else if (arg === '--theme') {
+            const value = argv[i + 1];
+            if (value !== 'dark' && value !== 'light') {
+                throw new Error("--theme requires a value of 'dark' or 'light'.");
+            }
+            if (theme !== undefined) {
+                throw new Error('--theme was specified more than once.');
+            }
+            theme = value;
+            i++; // consume the value
+        }
+        else if (arg === '--dpr') {
+            if (dpr !== undefined) {
+                throw new Error('--dpr was specified more than once.');
+            }
+            dpr = parseDprFlag(argv[i + 1]);
+            i++; // consume the value
+        }
+        else if (arg === '--image-tag') {
+            const value = argv[i + 1];
+            if (value === undefined || value.startsWith('-')) {
+                throw new Error('--image-tag requires a tag argument (e.g. latest, dali_2.5.18).');
+            }
+            if (imageTag !== undefined) {
+                throw new Error('--image-tag was specified more than once.');
+            }
+            imageTag = value;
+            i++; // consume the value
+        }
+        else if (arg === '--runtime-image') {
+            const value = argv[i + 1];
+            if (value === undefined || value.startsWith('-')) {
+                throw new Error('--runtime-image requires an image-name argument.');
+            }
+            if (image !== undefined) {
+                throw new Error('--runtime-image was specified more than once.');
+            }
+            image = value;
+            i++; // consume the value
+        }
+        else if (arg === '--runtime') {
+            const value = argv[i + 1];
+            if (value !== 'docker' && value !== 'local') {
+                throw new Error("--runtime requires a value of 'docker' or 'local'.");
+            }
+            if (runtime !== undefined && runtime !== value) {
+                throw new Error('conflicting runtime: --runtime and --local disagree.');
+            }
+            runtime = value;
+            i++; // consume the value
+        }
+        else if (arg === '--local') {
+            if (runtime === 'docker') {
+                throw new Error('conflicting runtime: --runtime docker and --local disagree.');
+            }
+            runtime = 'local';
+        }
+        else if (arg === '--dali-prefix') {
+            const value = argv[i + 1];
+            if (value === undefined || value.startsWith('-')) {
+                throw new Error('--dali-prefix requires a path argument.');
+            }
+            if (daliPrefix !== undefined) {
+                throw new Error('--dali-prefix was specified more than once.');
+            }
+            daliPrefix = value;
+            i++; // consume the value
+        }
+        else if (arg === '--list-versions') {
+            listVersions = true;
+        }
+        else if (arg === '--pull') {
+            if (pull !== undefined) {
+                throw new Error('--pull was specified more than once.');
+            }
+            // The tag is OPTIONAL: consume the next token only when it is a bare value
+            // (not another flag and not absent). `--pull` alone defaults to 'latest'
+            // (resolved at the dispatch site).
+            const value = argv[i + 1];
+            if (value !== undefined && !value.startsWith('-')) {
+                pull = { tag: value };
+                i++; // consume the optional tag
+            }
+            else {
+                pull = {};
+            }
+        }
+        else if (arg === '--code') {
+            const value = argv[i + 1];
+            // `--code` value may legitimately start with '-' (it's arbitrary C++), so
+            // only reject a genuinely missing value, not a leading-dash one.
+            if (value === undefined) {
+                throw new Error('--code requires a code-block argument.');
+            }
+            if (code !== undefined) {
+                throw new Error('--code was specified more than once.');
+            }
+            code = value;
+            i++; // consume the value
+        }
+        else if (arg === '-') {
+            // A lone '-' is the stdin positional, not an option.
+            if (input !== undefined) {
+                throw new Error(`unexpected extra argument: ${arg}`);
+            }
+            input = arg;
+        }
+        else if (arg.startsWith('-')) {
+            throw new Error(`unrecognized option: ${arg}`);
+        }
+        else if (input === undefined) {
+            input = arg;
+        }
+        else {
+            throw new Error(`unexpected extra argument: ${arg}`);
+        }
+    }
+    if (input !== undefined && code !== undefined) {
+        throw new Error('cannot combine a positional <input> with --code; pass exactly one.');
+    }
+    // One query per invocation keeps stdout a single JSON value (Inv-6).
+    if (at !== undefined && nodeId !== undefined) {
+        throw new Error('pass at most one query flag: --at or --node, not both.');
+    }
+    // --watch re-renders the input file on change, so it needs a watchable FILE.
+    // The unwatchable sources are known here: an inline --code block or a `-`/piped
+    // stdin block. (The remaining "no positional + piped stdin" case is rejected in
+    // runRender, where stdin's TTY state is known.)
+    if (watch && (code !== undefined || input === '-')) {
+        throw new Error('--watch requires a FILE input (not stdin or --code).');
+    }
+    // --update-baseline writes the current render as the baseline, so it needs a
+    // destination PNG (and optionally a tree-JSON destination).
+    if (updateBaseline && baseline === undefined) {
+        throw new Error('--update-baseline requires --baseline <png> (the destination).');
+    }
+    // Verify mode replaces the normal tree stdout with a single verdict JSON, so it
+    // cannot share stdout with a query/format flag, and it is a one-shot (no --watch).
+    const verifying = baseline !== undefined || baselineTree !== undefined;
+    if (verifying) {
+        if (at !== undefined || nodeId !== undefined) {
+            throw new Error('--baseline/--baseline-tree cannot be combined with --at/--node.');
+        }
+        if (format !== undefined || reportOut !== undefined) {
+            throw new Error('--baseline/--baseline-tree cannot be combined with --format/--report.');
+        }
+        if (watch) {
+            throw new Error('--baseline/--baseline-tree cannot be combined with --watch.');
+        }
+    }
+    // --threshold only affects the image diff; it is meaningless without a baseline.
+    if (threshold !== undefined && baseline === undefined) {
+        throw new Error('--threshold requires --baseline <png>.');
+    }
+    // Management commands (--list-versions / --pull) operate on the runtime image,
+    // not on a render: they are mutually exclusive with each other and with every
+    // render/verify-only flag. (--runtime-image / --image-tag DO apply to them, so
+    // those are deliberately not rejected here.)
+    if (listVersions && pull !== undefined) {
+        throw new Error('pass at most one management command: --list-versions or --pull, not both.');
+    }
+    const managing = listVersions || pull !== undefined;
+    if (managing) {
+        if (input !== undefined || code !== undefined) {
+            throw new Error('--list-versions / --pull do not take an input; remove it.');
+        }
+        if (imageOut !== undefined || overlayOut !== undefined || at !== undefined || nodeId !== undefined ||
+            format !== undefined || reportOut !== undefined || maxDepth !== undefined || maxNodes !== undefined ||
+            watch || baseline !== undefined || baselineTree !== undefined || updateBaseline ||
+            threshold !== undefined || resolution !== undefined || theme !== undefined || dpr !== undefined) {
+            throw new Error('--list-versions / --pull cannot be combined with render or verify flags.');
+        }
+    }
+    return {
+        input, code, imageOut, overlayOut, at, nodeId, format, reportOut, maxDepth, maxNodes, watch,
+        baseline, baselineTree, updateBaseline, threshold, resolution, theme, dpr,
+        imageTag, image, listVersions, pull, runtime, daliPrefix,
+    };
+}
+/**
+ * Resolve the render input from the parsed args + stdin TTY state, choosing the
+ * source per WU-3's precedence:
+ *   - `--code <text>`            → inline code block (resolveFromCode);
+ *   - positional `-`             → stdin code block (resolveFromStdin);
+ *   - positional file path       → file (resolveInput);
+ *   - no positional, no --code,
+ *     stdin is piped (!isTTY)    → stdin code block (resolveFromStdin).
+ * Throws a clear Error (surfaced on stderr + usage by the caller) when no input
+ * source is given at all.
+ */
+async function resolveRenderInput(parsed) {
+    if (parsed.code !== undefined) {
+        return (0, inputResolver_1.resolveFromCode)(parsed.code);
+    }
+    if (parsed.input === '-') {
+        return (0, inputResolver_1.resolveFromStdin)();
+    }
+    if (parsed.input !== undefined) {
+        return (0, inputResolver_1.resolveInput)(parsed.input);
+    }
+    if (!process.stdin.isTTY) {
+        return (0, inputResolver_1.resolveFromStdin)();
+    }
+    throw new Error('no input given: pass a <input.cpp> file, `-` (or pipe code on stdin), or --code "<text>".');
+}
+/**
+ * Resolve the M5 render config from parsed args: apply defaults (1920x1080 / dark /
+ * 1), scale the logical resolution by `dpr` into DEVICE pixels (rounded to an
+ * integer, since Xvfb/PREVIEW_WIDTH and the harness float literal are whole
+ * pixels), and pick the theme's background color. The LOGICAL `resolution`/`dpr`
+ * are what `root.meta` echoes (F5.2); the DEVICE dims are what the harness +
+ * container actually render at (F5.1).
+ */
+function resolveRenderConfig(parsed) {
+    const resolution = parsed.resolution ?? { w: DEFAULT_RESOLUTION.w, h: DEFAULT_RESOLUTION.h };
+    const theme = parsed.theme ?? DEFAULT_THEME;
+    const dpr = parsed.dpr ?? DEFAULT_DPR;
+    return {
+        resolution,
+        theme,
+        dpr,
+        deviceWidth: Math.round(resolution.w * dpr),
+        deviceHeight: Math.round(resolution.h * dpr),
+        backgroundColor: harnessTemplater_1.THEME_BACKGROUND[theme],
+    };
+}
+/**
+ * Resolve the runtime image name + tag ONCE from the parsed args, applying the
+ * defaults. Threaded into every command (render, verify, list-versions, pull) so
+ * they all target the same `<image>:<tag>`.
+ *
+ * Image-name precedence: `--runtime-image` → `DALI_PREVIEW_IMAGE` env → the
+ * `.dali/config.json` `image` written by `init` (BART GHCR proxy on the corp network,
+ * else GHCR) → the GHCR default. No network probe here — `init` does the detection and
+ * persists the result, so the render hot path stays synchronous. `--image-tag`
+ * overrides the tag (default `latest`).
+ */
+function resolveImageRef(parsed, baseDir = process.cwd()) {
+    return {
+        image: parsed.image ?? process.env.DALI_PREVIEW_IMAGE ?? (0, config_1.readConfig)(baseDir).image ?? dockerRunner_1.DEFAULT_DOCKER_IMAGE,
+        tag: parsed.imageTag ?? dockerRunner_1.DEFAULT_IMAGE_TAG,
+    };
+}
+/**
+ * Like {@link resolveImageRef}, but when NO image is explicitly configured (flag / env /
+ * `.dali/config.json`) it AUTO-DETECTS the registry — the BART GHCR proxy on the Samsung
+ * corp network, else GHCR — and persists the result to `.dali/config.json` so subsequent
+ * renders and `doctor` reuse it with no re-probe. This mirrors the VS Code extension (which
+ * auto-detects on every activation) and is what lets a bare render or `--pull` pick BART
+ * WITHOUT the user having run `init` first — avoiding the throttled direct-GHCR pulls that
+ * intermittently time out inside the corp network. `detect` is injectable for tests.
+ */
+async function resolveImageRefAuto(parsed, baseDir = process.cwd(), detect = registry_1.detectDefaultImage) {
+    // An explicit --image-tag wins; otherwise honor a `imageTag` pinned in config (e.g. the immutable
+    // tag pinned by the corp-proxy rolling-tag fallback) so a later render reuses it; else the default.
+    const tag = parsed.imageTag ?? (0, config_1.readConfig)(baseDir).imageTag ?? dockerRunner_1.DEFAULT_IMAGE_TAG;
+    const explicit = parsed.image ?? process.env.DALI_PREVIEW_IMAGE ?? (0, config_1.readConfig)(baseDir).image;
+    if (explicit) {
+        return { image: explicit, tag };
+    }
+    const image = await detect();
+    try {
+        const root = (0, sliceSources_1.findProjectRoot)(baseDir);
+        (0, config_1.writeConfig)(root, { ...(0, config_1.readConfig)(root), image });
+    }
+    catch {
+        /* best-effort: read-only dir / no project root — still render, just re-probe next time */
+    }
+    return { image, tag };
+}
+/**
+ * Build the real-I/O {@link EnsureDeps} for the corp-proxy rolling-tag fallback. The fallback tag
+ * is pinned to `.dali/config.json` (best-effort) so subsequent renders reuse it via
+ * {@link resolveImageRefAuto}. `hasLocal` treats a `docker images` failure as "absent" so the
+ * pull itself surfaces the real docker error.
+ */
+function makeEnsureDeps(baseDir) {
+    return {
+        hasLocal: async (image, tag) => {
+            try {
+                return (await (0, imageManager_1.localTags)(image)).includes(tag);
+            }
+            catch {
+                return false;
+            }
+        },
+        pull: imageManager_1.pullImage,
+        listTags: registryClient_1.listRemoteTags,
+        persistTag: (tag) => {
+            try {
+                const root = (0, sliceSources_1.findProjectRoot)(baseDir);
+                (0, config_1.writeConfig)(root, { ...(0, config_1.readConfig)(root), imageTag: tag });
+            }
+            catch { /* best-effort pin: read-only dir / no project root */ }
+        },
+        warn: (message) => process.stderr.write(`dali-ui-preview-cli: ${message}\n`),
+    };
+}
+/**
+ * Log (to STDERR — stdout is the JSON contract) which dali-ui version and runtime actually
+ * rendered the preview, so a user/agent can see it in the render output. Best-effort: a
+ * failed version probe still renders (prints `unknown`). Never throws.
+ */
+async function logRenderRuntime(ctx) {
+    try {
+        if (ctx.mode === 'docker') {
+            const version = await (0, runtimeVersion_1.dockerDaliVersion)(ctx.image, ctx.tag);
+            const { label } = (0, registry_1.describeRegistry)(ctx.image);
+            process.stderr.write(`dali-ui runtime: ${version}  (docker · ${ctx.image}:${ctx.tag} — ${label})\n`);
+        }
+        else {
+            const prefix = (0, localRunner_1.checkLocalReadiness)({ daliPrefix: ctx.daliPrefix, baseDir: ctx.baseDir }).prefix;
+            const version = prefix ? await (0, runtimeVersion_1.localDaliVersion)(prefix) : 'unknown';
+            process.stderr.write(`dali-ui runtime: ${version}  (local · ${prefix ?? 'no prefix resolved'})\n`);
+        }
+    }
+    catch {
+        /* diagnostics only — never block a render on the version probe */
+    }
+}
+/**
+ * Render the templated harness for `resolved` at `config`'s device dimensions and
+ * theme, returning the raw render result. Centralizes the WU-1 wiring so every
+ * render site (one-shot, watch, verify) passes the SAME width/height to BOTH
+ * `templateHarness` (the `PREVIEW_WIDTH/HEIGHT` float literals + background) AND
+ * `renderInContainer` (the `PREVIEW_WIDTH/HEIGHT` env → Xvfb screen size). The
+ * resolved `imageRef` selects which runtime image+tag the container runs.
+ */
+/**
+ * Cross-file slice (ADR-006): when the input is a FILE, collect helper/type/const
+ * definitions from the project sources it `#include`s and inline them into the
+ * harness `globals` slot, so a preview that USES a component defined in another file
+ * still renders. Unresolved symbols get weak stubs (placeholder Views) so the render
+ * never hard-fails on a missing dependency. stdin/inline inputs have no project
+ * siblings, so they pass through unchanged.
+ */
+function computeSlice(resolved) {
+    // Strip `#include` lines from the preview BODY: a body goes inside
+    // `CreatePreviewUI()`, where `#include` is invalid, and a project header
+    // ("card.h") isn't in the container anyway — its definitions are inlined into
+    // `globals` by the slice. System `<...>` come from the harness template. Blank
+    // the line (keep the newline) so source-line numbers stay aligned.
+    const stripIncludes = (s) => s.replace(/^[ \t]*#include\b.*$/gm, '');
+    const body = stripIncludes(resolved.code);
+    const raw = resolved.sourcePath;
+    if (!raw || raw.startsWith('<')) {
+        return { globals: '', body, heuristic: false, helperPaths: [] };
+    }
+    // Normalize to an ABSOLUTE path: resolveProjectIncludes contains its reads to the
+    // project root, and `path.resolve(dir, "...")` of an include yields an absolute
+    // path — so a RELATIVE entry (`dali-ui-preview-cli foo.cpp` from the project dir)
+    // would fail the containment check and silently collect nothing. Resolving here
+    // makes cross-file work regardless of how the file path was passed.
+    const p = path.resolve(raw);
+    if (!fs.existsSync(p)) {
+        return { globals: '', body, heuristic: false, helperPaths: [] };
+    }
+    let fullText;
+    try {
+        fullText = fs.readFileSync(p, 'utf8');
+    }
+    catch {
+        return { globals: '', body, heuristic: false, helperPaths: [] };
+    }
+    const extraSources = (0, sliceSources_1.resolveProjectIncludes)(p, fullText);
+    const slice = (0, sliceBuilder_1.buildSlice)(fullText, p, body, extraSources);
+    return slice.rung === 'heuristic'
+        ? { globals: slice.globals, body: slice.body, heuristic: true, helperPaths: slice.sourcePaths.slice(1) }
+        : { globals: '', body, heuristic: false, helperPaths: [] };
+}
+/**
+ * Resolve the runtime context for a render: the mode (flag → env → config →
+ * docker), the docker image coordinates, the optional native DALi prefix, and the
+ * base directory used to locate `.dali/config.json` and a native prefix (the input
+ * file's dir, or cwd for stdin/inline input).
+ */
+async function resolveRuntimeContext(parsed, resolved) {
+    const baseDir = resolved.sourcePath && !resolved.sourcePath.startsWith('<')
+        ? path.dirname(path.resolve(resolved.sourcePath))
+        : process.cwd();
+    // Auto-detect the registry (BART/GHCR) when nothing is configured, so a render without a
+    // prior `init` still avoids the throttled direct-GHCR pull on the corp network.
+    const ref = await resolveImageRefAuto(parsed, baseDir);
+    const mode = (0, render_1.resolveRuntimeMode)({ flag: parsed.runtime, baseDir });
+    // Docker mode: make sure the image is actually pullable BEFORE `docker run` auto-pulls it, so a
+    // rolling tag the corp proxy can't serve (`latest`) self-heals to the newest immutable instead of
+    // failing the render. Agents call render directly (no prior `--pull`), so this can't rely on one.
+    // No-op when the image is already local. Local mode doesn't use the image.
+    const tag = mode === 'docker'
+        ? await (0, imageManager_1.ensureImageWithFallback)(ref.image, ref.tag, makeEnsureDeps(baseDir))
+        : ref.tag;
+    return {
+        mode,
+        image: ref.image,
+        tag,
+        daliPrefix: parsed.daliPrefix,
+        baseDir,
+    };
+}
+async function renderWithConfig(resolved, config, ctx) {
+    await logRenderRuntime(ctx);
+    const slice = computeSlice(resolved);
+    const doRender = (globals, body) => (0, render_1.render)(ctx.mode, body, {
+        width: config.deviceWidth,
+        height: config.deviceHeight,
+        backgroundColor: config.backgroundColor,
+        globals,
+    }, {
+        image: ctx.image,
+        tag: ctx.tag,
+        width: config.deviceWidth,
+        height: config.deviceHeight,
+        daliPrefix: ctx.daliPrefix,
+        baseDir: ctx.baseDir,
+    });
+    if (slice.heuristic && slice.globals) {
+        try {
+            return await doRender(slice.globals, slice.body);
+        }
+        catch (err) {
+            if (err instanceof dockerRunner_1.RenderError && err.phase === 'compile') {
+                // If the compile error is INSIDE a collected helper file, that helper is
+                // the real problem — surface it (don't mask it with the fallback's
+                // misleading "X was not declared"). Otherwise the error is in the body or
+                // a weak stub: fall back to the plain body so the user sees their own error.
+                const inHelper = slice.helperPaths.some((sp) => err.stderr.includes(sp));
+                if (!inHelper)
+                    return await doRender('', slice.body);
+            }
+            throw err;
+        }
+    }
+    return doRender('', slice.body);
+}
+/**
+ * Attach the effective render config to the ROOT node as `root.meta`
+ * `{ resolution:{w,h}, theme, dpr }` (F5.2), echoing the LOGICAL values (pre-dpr
+ * scaling) plus the dpr. Deterministic and additive — it adds one field and
+ * touches no existing one. Returns the same node for chaining.
+ */
+function attachMeta(tree, config) {
+    tree.meta = {
+        resolution: { w: config.resolution.w, h: config.resolution.h },
+        theme: config.theme,
+        dpr: config.dpr,
+    };
+    return tree;
+}
+/**
+ * Select + write the single stdout emission for one render (the machine contract,
+ * Inv-6). Precedence: a query flag (`--at`/`--node`) prints ONLY its lookup JSON;
+ * otherwise `--format tree` prints the human box-drawing tree, and the default
+ * prints the (optionally `--max-depth`/`--max-nodes`-bounded) full-tree JSON.
+ * Exactly one line is written to stdout.
+ */
+function emitStdout(tree, parsed) {
+    if (parsed.at !== undefined) {
+        const hit = (0, treeQuery_1.nodeAt)(tree, parsed.at.x, parsed.at.y);
+        const payload = hit !== null ? (0, treeQuery_1.toRegion)(hit) : { at: [parsed.at.x, parsed.at.y], node: null };
+        process.stdout.write(`${JSON.stringify(payload)}\n`);
+        return;
+    }
+    if (parsed.nodeId !== undefined) {
+        const n = (0, treeQuery_1.nodeById)(tree, parsed.nodeId);
+        process.stdout.write(`${JSON.stringify(n !== null ? (0, treeQuery_1.toRegion)(n) : null)}\n`);
+        return;
+    }
+    if (parsed.format === 'tree') {
+        process.stdout.write(`${(0, treeFormatter_1.formatTree)(tree)}\n`);
+        return;
+    }
+    // Default JSON. Apply the token bounds only when at least one was given so the
+    // unbounded path is byte-for-byte the M1/M2 output.
+    const bounded = parsed.maxDepth !== undefined || parsed.maxNodes !== undefined
+        ? (0, treeTruncate_1.truncate)(tree, { maxDepth: parsed.maxDepth, maxNodes: parsed.maxNodes })
+        : tree;
+    process.stdout.write(`${JSON.stringify(bounded)}\n`);
+}
+/**
+ * Run ONE full render→emit pass: template → render in container → build the
+ * annotated tree → write the file side-effects (`--overlay`/`--report`/`--image`)
+ * → emit the single stdout line. Owns its own temp workDir, cleaned up in a
+ * `finally` so each pass (including every watch re-render) leaves no temp dir.
+ * Throws on render/IO failure so the caller decides fatal-vs-recoverable.
+ *
+ * `--overlay`/`--report`/`--image` are file side-effects orthogonal to stdout;
+ * stdout selection is delegated to {@link emitStdout}.
+ */
+async function renderAndEmit(parsed, resolved) {
+    let workDir;
+    try {
+        const config = resolveRenderConfig(parsed);
+        const result = await renderWithConfig(resolved, config, await resolveRuntimeContext(parsed, resolved));
+        workDir = result.workDir;
+        // Build the annotated canonical tree (now carrying the M2 `mark`). This is the
+        // single source every surface below reads — overlay marks, --at/--node, stdout.
+        // Echo the effective render config on the root (F5.2).
+        const tree = attachMeta((0, treeModel_1.buildTree)(result.metadataJson, {
+            sourceCode: resolved.code,
+            startLine: resolved.startLine,
+        }), config);
+        // --overlay writes a Set-of-Mark annotated PNG; it implies render (already
+        // done) and is orthogonal to stdout (Inv-6). Written before stdout selection.
+        if (parsed.overlayOut !== undefined) {
+            const overlayDir = path.dirname(path.resolve(parsed.overlayOut));
+            await fs.promises.mkdir(overlayDir, { recursive: true });
+            await (0, overlayRenderer_1.renderOverlay)(result.pngPath, tree, parsed.overlayOut);
+        }
+        // --report writes a self-contained HTML/MD report (PNG + box-tree + node
+        // table). Like --overlay it implies render and is orthogonal to stdout: the
+        // JSON tree is still emitted below (the report is purely a file side-effect).
+        if (parsed.reportOut !== undefined) {
+            await (0, reportFormatter_1.writeReport)(tree, result.pngPath, parsed.reportOut);
+        }
+        // The single stdout emission (the contract).
+        emitStdout(tree, parsed);
+        // PNG is copied out ONLY when --image was supplied; otherwise the harness's PNG
+        // stays in the temp workDir and is removed by the finally cleanup below.
+        if (parsed.imageOut !== undefined) {
+            const destDir = path.dirname(path.resolve(parsed.imageOut));
+            await fs.promises.mkdir(destDir, { recursive: true });
+            await fs.promises.copyFile(result.pngPath, parsed.imageOut);
+        }
+    }
+    finally {
+        if (workDir !== undefined) {
+            (0, dockerRunner_1.cleanupWorkDir)(workDir);
+        }
+    }
+}
+/**
+ * Load a target scene tree from a `--baseline-tree` JSON file and project it
+ * through {@link buildTree} so it is the SAME canonical shape as the freshly
+ * rendered tree (ids/types/bounds aligned), making the id-keyed {@link treeDiff}
+ * apples-to-apples. The file may be a `{ root: <node> }` wrapper or a bare node —
+ * buildTree accepts both. No `sourceCode` is passed (the baseline carries its own
+ * `sourceLine`s already).
+ *
+ * @throws  If the file is missing/unreadable or not valid tree JSON.
+ */
+async function loadBaselineTree(baselineTreePath) {
+    let raw;
+    try {
+        raw = await fs.promises.readFile(baselineTreePath, 'utf8');
+    }
+    catch (err) {
+        const reason = err instanceof Error ? err.message : String(err);
+        throw new Error(`could not read --baseline-tree '${baselineTreePath}': ${reason}`);
+    }
+    return (0, treeModel_1.buildTree)(raw);
+}
+/**
+ * The verify / update-baseline pass (M4): render ONCE, then EITHER
+ *   - `--update-baseline`: write the just-rendered PNG to the `--baseline` path
+ *     (and the current tree JSON to `--baseline-tree`, if given) and return 0 — no
+ *     diff is computed; or
+ *   - verify (`--baseline` and/or `--baseline-tree`, without --update-baseline):
+ *     image-diff and/or tree-diff the render against the baseline(s), print the
+ *     combined verdict JSON to stdout (REPLACING the normal tree stdout, Inv-6),
+ *     and return 0 (match) or 20 (diverged).
+ *
+ * Owns its own temp workDir, cleaned up in a `finally` (mirrors {@link renderAndEmit}).
+ * `--image` is still honoured as an orthogonal side-effect (copy the actual PNG out).
+ * Throws on render/IO failure so the caller decides fatal-vs-recoverable.
+ */
+async function runVerifyOrUpdate(parsed, resolved) {
+    let workDir;
+    try {
+        const config = resolveRenderConfig(parsed);
+        const result = await renderWithConfig(resolved, config, await resolveRuntimeContext(parsed, resolved));
+        workDir = result.workDir;
+        const tree = attachMeta((0, treeModel_1.buildTree)(result.metadataJson, {
+            sourceCode: resolved.code,
+            startLine: resolved.startLine,
+        }), config);
+        // --image is an orthogonal side-effect: copy the actual render out if asked.
+        if (parsed.imageOut !== undefined) {
+            const destDir = path.dirname(path.resolve(parsed.imageOut));
+            await fs.promises.mkdir(destDir, { recursive: true });
+            await fs.promises.copyFile(result.pngPath, parsed.imageOut);
+        }
+        // --update-baseline: write the current render AS the baseline(s); no diff.
+        if (parsed.updateBaseline) {
+            // parseRenderArgs guarantees baseline is set when updateBaseline is.
+            const baselinePng = parsed.baseline;
+            const pngDir = path.dirname(path.resolve(baselinePng));
+            await fs.promises.mkdir(pngDir, { recursive: true });
+            await fs.promises.copyFile(result.pngPath, baselinePng);
+            if (parsed.baselineTree !== undefined) {
+                const treeDir = path.dirname(path.resolve(parsed.baselineTree));
+                await fs.promises.mkdir(treeDir, { recursive: true });
+                await fs.promises.writeFile(parsed.baselineTree, `${JSON.stringify(tree)}\n`, 'utf8');
+            }
+            return 0;
+        }
+        // Verify: compute whichever diffs were requested, then the combined verdict.
+        let image;
+        if (parsed.baseline !== undefined) {
+            // Write the visual diff PNG next to the BASELINE (a persistent, user-owned
+            // dir) rather than imageDiff's default location next to the actual PNG —
+            // the actual lives in `workDir`, which the `finally` below deletes, leaving
+            // the advertised `diffPngPath` dangling. Next-to-baseline survives cleanup,
+            // so the verdict's `diffPngPath` points at a file that still exists.
+            const baselinePath = parsed.baseline;
+            const baseExt = path.extname(baselinePath);
+            const diffPngPath = path.join(path.dirname(baselinePath), `${path.basename(baselinePath, baseExt)}.diff.png`);
+            image = await (0, imageDiff_1.imageDiff)(result.pngPath, baselinePath, {
+                failRatio: parsed.threshold,
+                diffPngPath,
+            });
+        }
+        let treeResult;
+        if (parsed.baselineTree !== undefined) {
+            const target = await loadBaselineTree(parsed.baselineTree);
+            treeResult = (0, treeDiff_1.treeDiff)(tree, target);
+        }
+        const verdict = (0, verdict_1.buildVerdict)({ image, tree: treeResult });
+        process.stdout.write(`${JSON.stringify(verdict)}\n`);
+        return (0, verdict_1.verdictExitCode)(verdict);
+    }
+    finally {
+        if (workDir !== undefined) {
+            (0, dockerRunner_1.cleanupWorkDir)(workDir);
+        }
+    }
+}
+/**
+ * `--list-versions` (management, no render): merge the remote registry tags with
+ * the local docker tags for the resolved `<image>`, marking each tag's
+ * local/current status, and print the {@link VersionListing} JSON to STDOUT, exit
+ * 0. The LOCAL part tolerates docker being down (imageManager logs a stderr note
+ * and reports `local: false`), so this stays exit 0 offline-from-docker. A REGISTRY
+ * failure is the only fatal case here (nothing useful to print) → exit 1 + stderr.
+ */
+async function runListVersions(parsed) {
+    const { image, tag } = resolveImageRef(parsed);
+    try {
+        const listing = await (0, imageManager_1.listVersions)(image, tag);
+        process.stdout.write(`${JSON.stringify(listing)}\n`);
+        return EXIT.OK;
+    }
+    catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        console.error(`dali-ui-preview-cli: could not list runtime versions: ${message}`);
+        return EXIT.USAGE;
+    }
+}
+/**
+ * `--pull [<tag>]` (management, no render): pull the resolved `<image>:<tag>`
+ * (default tag `latest`), streaming docker's progress to STDERR, then print
+ * `{"pulled":"<ref>","ok":true}` to STDOUT, exit 0. Docker being unavailable is a
+ * distinct documented failure (exit 12); any other pull failure (bad tag, network)
+ * is exit 11 with the error on stderr (stdout stays empty for the caller's parser).
+ */
+async function runPull(parsed) {
+    // Auto-detect the registry (BART/GHCR) when nothing is configured — a bare `--pull` must
+    // avoid the throttled direct-GHCR blob pull that intermittently times out on the corp net.
+    const { image, tag: defaultTag } = await resolveImageRefAuto(parsed);
+    // `--pull` alone (or `--pull` with no tag token) defaults to 'latest'; an
+    // explicit `--image-tag` is NOT used to pick the pulled tag (the positional
+    // `--pull <tag>` is the selector), but `--pull` with no tag falls back to the
+    // resolved default tag so `--pull` and a bare render agree on 'latest'.
+    const tag = parsed.pull?.tag ?? defaultTag;
+    if (!(await (0, dockerRunner_1.isDockerAvailable)())) {
+        console.error('dali-ui-preview-cli: Docker is not available: `docker info` failed. Ensure Docker is ' +
+            'installed, the daemon is running, and the current user can access the Docker socket.');
+        return EXIT.DOCKER_UNAVAILABLE;
+    }
+    try {
+        // Self-heal a rolling tag the corp proxy can't serve (`latest`) → newest immutable, pinned to
+        // config so later renders reuse it. `--pull` deliberately re-pulls even if local (a refresh).
+        const landedTag = await (0, imageManager_1.pullWithFallback)(image, tag, makeEnsureDeps(process.cwd()));
+        const out = { pulled: `${image}:${landedTag}`, ok: true };
+        if (landedTag !== tag) {
+            out.requestedTag = tag;
+            out.pinnedTag = landedTag;
+        }
+        process.stdout.write(`${JSON.stringify(out)}\n`);
+        return EXIT.OK;
+    }
+    catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        console.error(`dali-ui-preview-cli: ${message}`);
+        return EXIT.RENDER_ERROR;
+    }
+}
+/**
+ * Map a {@link RenderError}'s raw container diagnostics to the user's absolute
+ * source line via the vendored gcc parser (F5.3): read the RAW harness template
+ * (where `{{USER_CODE}}` still exists) to get the 1-based offset, run
+ * `parseGccErrors` (which returns a 0-based user-relative line), and add
+ * `resolved.startLine` (the source's absolute 0-based offset in its file) to the
+ * FIRST parsed error. The public `sourceLine` contract is 1-BASED (matching the
+ * tree's `sourceLine`), so `+1` is applied at this output boundary — a single-line
+ * `--code` compile error (startLine 0, user line 0) reports `1`, not `0`. Returns
+ * the diagnostic's message + that 1-based line, or `formatRawError(stderr)` + null
+ * when nothing maps (boilerplate / render-phase).
+ */
+function mapRenderError(err, resolved) {
+    const offset = (0, harnessTemplater_1.userCodeOffset)();
+    const parsed = (0, errorParser_1.parseGccErrors)(err.stderr, offset);
+    if (parsed.length > 0) {
+        const first = parsed[0];
+        return {
+            phase: err.phase,
+            message: first.message,
+            sourceLine: first.line + (resolved.startLine ?? 0) + 1,
+        };
+    }
+    return {
+        phase: err.phase,
+        message: (0, errorParser_1.formatRawError)(err.stderr),
+        sourceLine: null,
+    };
+}
+/**
+ * Decide the exit code + diagnostics for a failed render/verify pass (F5.3/F5.4):
+ *   - {@link RenderError} → print the structured `{phase,message,sourceLine}` JSON
+ *     to STDERR (stdout stays empty) and return 10 (compile) / 11 (render);
+ *   - the docker-unavailable preflight Error → return 12;
+ *   - any other Error (IO, bad metadata, …) → the pre-M5 plain stderr line + 1.
+ */
+async function handleRenderFailure(err, resolved) {
+    if (err instanceof dockerRunner_1.RenderError) {
+        const structured = mapRenderError(err, resolved);
+        // The structured error is the machine contract on the failure path: emit it as
+        // a single JSON line to STDERR, leaving stdout empty for the caller's parser.
+        console.error(JSON.stringify(structured));
+        return structured.phase === 'compile' ? EXIT.COMPILE_ERROR : EXIT.RENDER_ERROR;
+    }
+    const message = err instanceof Error ? err.message : String(err);
+    // The native runner throws this exact plain Error when the selected local runtime
+    // is missing its deps/prefix — a distinct, documented failure class (exit 13),
+    // kept separate from a docker-unavailable (12) so a script can branch on it.
+    if (/^Local DALi runtime is not available:/.test(message)) {
+        console.error(`dali-ui-preview-cli: ${message}`);
+        return EXIT.RUNTIME_UNAVAILABLE;
+    }
+    // The `docker info` preflight (dockerRunner) throws this exact plain Error; it is
+    // a distinct, documented failure class (exit 12), kept separate from a usage (1)
+    // or a compile/render (10/11) failure so a script can branch on it.
+    if (/^Docker is not available:/.test(message)) {
+        console.error(`dali-ui-preview-cli: ${message}`);
+        // Helpful nudge: if the host has a ready native runtime, point the user at it
+        // instead of leaving them stuck on a missing Docker daemon.
+        const baseDir = resolved.sourcePath && !resolved.sourcePath.startsWith('<')
+            ? path.dirname(path.resolve(resolved.sourcePath))
+            : process.cwd();
+        const local = (0, localRunner_1.checkLocalReadiness)({ baseDir });
+        if (local.ready && local.prefix) {
+            console.error(`dali-ui-preview-cli: a local DALi runtime looks ready at ${local.prefix} — retry with \`--runtime local\`.`);
+        }
+        return EXIT.DOCKER_UNAVAILABLE;
+    }
+    console.error(`dali-ui-preview-cli: ${message}`);
+    return EXIT.USAGE;
+}
+/**
+ * Default-command dispatch. First parses the args, then short-circuits to a
+ * management command when one is set (`--list-versions` / `--pull` — these take no
+ * render input). Otherwise it is the render command: resolve input (file | stdin |
+ * inline) → template → render in container → build the annotated tree → select
+ * stdout per the query/format flags → write the file side-effects for
+ * `--image` / `--overlay` / `--report`.
+ *
+ * With `--watch` (FILE input only) it renders+emits once, then re-renders+re-emits
+ * on every change to that file until SIGINT/SIGTERM. STDOUT carries a SINGLE
+ * emission per render (JSON tree, box-tree, or a lookup result). Every diagnostic
+ * goes to stderr. Returns the process exit code.
+ */
+async function runRender(argv) {
+    let parsed;
+    try {
+        parsed = parseRenderArgs(argv);
+    }
+    catch (err) {
+        console.error(`dali-ui-preview-cli: ${err instanceof Error ? err.message : String(err)}`);
+        console.error(USAGE);
+        return EXIT.USAGE;
+    }
+    // Management commands (--list-versions / --pull) operate on the runtime image and
+    // take NO render input, so they are dispatched here — before any input resolution.
+    // parseRenderArgs guarantees they are mutually exclusive with each other and with
+    // every render/verify flag. Their stdout is JSON; exit 0 on success.
+    if (parsed.listVersions) {
+        return runListVersions(parsed);
+    }
+    if (parsed.pull !== undefined) {
+        return runPull(parsed);
+    }
+    let resolved;
+    try {
+        // Resolve the input source up front: an "no input given" error here must
+        // surface the usage banner, exactly like an arg-parse error.
+        resolved = await resolveRenderInput(parsed);
+        // --watch needs a watchable FILE; the remaining unwatchable case (no
+        // positional, code piped on stdin) is only detectable here, post-resolve.
+        if (parsed.watch && (parsed.input === undefined || parsed.input === '-')) {
+            throw new Error('--watch requires a FILE input (not stdin or --code).');
+        }
+    }
+    catch (err) {
+        console.error(`dali-ui-preview-cli: ${err instanceof Error ? err.message : String(err)}`);
+        console.error(USAGE);
+        return EXIT.USAGE;
+    }
+    if (resolved.code.trim().length === 0) {
+        console.error('dali-ui-preview-cli: input is empty — no preview code to render.');
+        return EXIT.USAGE;
+    }
+    // Verify / update-baseline (M4): a one-shot render whose stdout is the verdict
+    // JSON (or nothing, for --update-baseline), and whose exit code is 0 = match /
+    // 20 = diverged. A render/IO failure here is a TOOL error, surfaced via the M5
+    // structured-error path (compile→10 / render→11 / docker→12, else 1), kept
+    // distinct from the 20 "rendered, but differs" verdict. Parsed-arg validation
+    // already rejected combining these flags with --watch / --at / --node / --format.
+    if (parsed.updateBaseline || parsed.baseline !== undefined || parsed.baselineTree !== undefined) {
+        try {
+            return await runVerifyOrUpdate(parsed, resolved);
+        }
+        catch (err) {
+            return await handleRenderFailure(err, resolved);
+        }
+    }
+    // --watch: an initial render+emit, then re-render on every change to the input
+    // file (debounced) until interrupted. `parsed.input` is a real file path here
+    // (the non-file sources were rejected above). Each pass RE-READS the file so an
+    // edit is picked up; resolved is refreshed per render.
+    if (parsed.watch) {
+        const filePath = parsed.input;
+        try {
+            await (0, watch_1.runWatch)(filePath, async () => {
+                const fresh = await (0, inputResolver_1.resolveInput)(filePath);
+                if (fresh.code.trim().length === 0) {
+                    console.error('dali-ui-preview-cli: input is empty — no preview code to render.');
+                    return;
+                }
+                await renderAndEmit(parsed, fresh);
+            });
+            return 0;
+        }
+        catch (err) {
+            return await handleRenderFailure(err, resolved);
+        }
+    }
+    // One-shot render.
+    try {
+        await renderAndEmit(parsed, resolved);
+        return EXIT.OK;
+    }
+    catch (err) {
+        return await handleRenderFailure(err, resolved);
+    }
+}
+async function main(argv) {
+    if (argv.includes('--version') || argv.includes('-v')) {
+        process.stdout.write(`${readVersion()}\n`);
+        return 0;
+    }
+    if (argv.includes('--help') || argv.includes('-h')) {
+        process.stdout.write(`${USAGE}\n`);
+        return 0;
+    }
+    // Hard-stop on a non-Linux host (mac/Windows-native): every render path needs a Linux
+    // Docker runtime or native g++/Xvfb, so fail fast with actionable guidance instead of a
+    // confusing downstream docker/xvfb error. WSL2 reports `linux`, so it passes through.
+    const platformError = unsupportedPlatformMessage(process.platform);
+    if (platformError) {
+        console.error(platformError);
+        return EXIT.UNSUPPORTED_PLATFORM;
+    }
+    // `init` — seed the current project (AGENTS.md + Claude skill) + pull image so a
+    // coding agent can verify DALi UI in its loop. Lazy-required (only when used).
+    if (argv[0] === 'init') {
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        return require('./init').runInit(argv.slice(1));
+    }
+    // `doctor` — machine-readable environment preflight: print a readiness report
+    // (which runtimes are usable, which a bare render will pick) as one JSON line so
+    // an agent can check BEFORE rendering instead of hitting an exit-12/13 failure.
+    // Exit 0 ready / 13 no runtime usable. Lazy-required (only when used).
+    if (argv[0] === 'doctor') {
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        return require('./doctor').runDoctor(argv.slice(1));
+    }
+    // A bare invocation (no args) is only a usage request when stdin is an
+    // interactive TTY. If code is piped in (`cat x.cpp | dali-ui-preview-cli`), fall
+    // through to runRender, which reads the piped stdin code block.
+    if (argv.length === 0 && process.stdin.isTTY) {
+        process.stdout.write(`${USAGE}\n`);
+        return 0;
+    }
+    // Default command: resolve input (file | stdin | --code), print the tree,
+    // and write the PNG only when --image was supplied.
+    return runRender(argv);
+}
+// Auto-run ONLY when invoked as the entry script (`out/cli.js` via the `bin`
+// shim). Guarding on `require.main === module` lets the unit tests `require()`
+// this module to exercise its pure helpers (e.g. mapRenderError) WITHOUT executing
+// the CLI and calling `process.exit`.
+if (require.main === module) {
+    main(process.argv.slice(2))
+        .then((code) => process.exit(code))
+        .catch((err) => {
+        console.error(`dali-ui-preview-cli: ${err instanceof Error ? err.message : String(err)}`);
+        process.exit(1);
+    });
+}

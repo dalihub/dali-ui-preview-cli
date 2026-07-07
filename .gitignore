@@ -1,4 +1,7 @@
-out/
+# NOTE: out/ (compiled JS) IS committed so `npm i -g github:...` installs with NO build
+# step — the corp npm (omit=dev) has no `tsc`. A pre-commit hook keeps it in sync.
+# Only the test build output is ignored (excluded from the published package too).
+out/test/
 node_modules/
 
 # c8 coverage output

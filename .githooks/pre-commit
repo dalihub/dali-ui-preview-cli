@@ -1,0 +1,9 @@
+#!/bin/sh
+# Keep the committed out/ (compiled JS) in sync with src/ — a bare `npm i -g github:...`
+# installs WITHOUT a build step (corp npm has no tsc), so out/ must be current.
+# Only rebuilds when TS sources or tsconfig are staged, to stay fast.
+if git diff --cached --name-only | grep -qE '^(src/|tsconfig\.json$)'; then
+  echo "pre-commit: rebuilding out/ (src changed)…"
+  npm run build >/dev/null 2>&1 || { echo "pre-commit: build failed — fix before committing"; exit 1; }
+  git add out
+fi
