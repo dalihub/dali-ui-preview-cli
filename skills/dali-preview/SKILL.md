@@ -75,6 +75,9 @@ There are **two runtimes** — `doctor` reports both; **Docker is the default**:
 
 - **stdout** = the JSON scene tree (parse it directly).
 - **`--image <path>`** writes the rendered PNG — Read it to view the layout.
+- **dali-ui version** — stderr prints `dali-ui runtime: <version>  (docker · … | local · <prefix>)`.
+  If a compile error names a removed/renamed API, check this: an old runtime version (not your
+  code) is the cause — refresh it (`--pull`, or rebuild the local prefix).
 - **exit codes**: `0` ok · `10` compile error in *your* code (stderr carries
   `{"phase":"compile","message":...,"sourceLine":N}` — fix that line) · `11` render error ·
   `12` Docker unavailable (run `--pull`, or start Docker) · `13` no usable runtime (from a

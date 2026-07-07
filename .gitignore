@@ -7,3 +7,6 @@ coverage/
 
 # image-diff artifacts
 *.diff.png
+
+# render scratch (auto-written by a bare render / init)
+.dali/

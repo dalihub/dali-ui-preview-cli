@@ -67,6 +67,9 @@ There are **two runtimes** — `doctor` reports both; **Docker is the default**.
   a shell `>` won't create it.
 - **`--image <path>`** writes the rendered PNG (its parent folder **is** auto-created) —
   Read it to view the layout.
+- **dali-ui version** — stderr prints `dali-ui runtime: <version>  (docker · … | local · <prefix>)`.
+  If a compile error names a removed/renamed API, it's an old runtime version (not your code) —
+  refresh it (`--pull`, or rebuild the local prefix), don't rewrite correct code.
 - **exit codes**: `0` ok · `10` compile error in *your* code (stderr carries
   `{"phase":"compile","message":...,"sourceLine":N}` — fix that line) · `11` render
   error · `12` Docker unavailable (run `--pull`, or start Docker) · `13` no usable runtime

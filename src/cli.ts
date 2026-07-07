@@ -28,11 +28,13 @@ import {
   DEFAULT_IMAGE_TAG,
 } from './dockerRunner';
 import { render, resolveRuntimeMode, RuntimeMode } from './render';
-import { readConfig } from './runtime/config';
+import { readConfig, writeConfig } from './runtime/config';
 import { checkLocalReadiness } from './runtime/localRunner';
 import { listVersions, pullImage } from './imageManager';
 import { buildSlice } from './sliceBuilder';
-import { resolveProjectIncludes } from './sliceSources';
+import { resolveProjectIncludes, findProjectRoot } from './sliceSources';
+import { detectDefaultImage, describeRegistry } from './registry';
+import { dockerDaliVersion, localDaliVersion } from './runtimeVersion';
 import { buildTree, MinimalNode } from './treeModel';
 import { parseGccErrors, formatRawError } from './errorParser';
 import { nodeAt, nodeById, toRegion } from './treeQuery';
@@ -726,6 +728,54 @@ function resolveImageRef(parsed: RenderArgs, baseDir: string = process.cwd()): I
 }
 
 /**
+ * Like {@link resolveImageRef}, but when NO image is explicitly configured (flag / env /
+ * `.dali/config.json`) it AUTO-DETECTS the registry — the BART GHCR proxy on the Samsung
+ * corp network, else GHCR — and persists the result to `.dali/config.json` so subsequent
+ * renders and `doctor` reuse it with no re-probe. This mirrors the VS Code extension (which
+ * auto-detects on every activation) and is what lets a bare render or `--pull` pick BART
+ * WITHOUT the user having run `init` first — avoiding the throttled direct-GHCR pulls that
+ * intermittently time out inside the corp network. `detect` is injectable for tests.
+ */
+export async function resolveImageRefAuto(
+  parsed: RenderArgs,
+  baseDir: string = process.cwd(),
+  detect: (timeoutMs?: number) => Promise<string> = detectDefaultImage,
+): Promise<ImageRef> {
+  const tag = parsed.imageTag ?? DEFAULT_IMAGE_TAG;
+  const explicit = parsed.image ?? process.env.DALI_PREVIEW_IMAGE ?? readConfig(baseDir).image;
+  if (explicit) { return { image: explicit, tag }; }
+  const image = await detect();
+  try {
+    const root = findProjectRoot(baseDir);
+    writeConfig(root, { ...readConfig(root), image });
+  } catch {
+    /* best-effort: read-only dir / no project root — still render, just re-probe next time */
+  }
+  return { image, tag };
+}
+
+/**
+ * Log (to STDERR — stdout is the JSON contract) which dali-ui version and runtime actually
+ * rendered the preview, so a user/agent can see it in the render output. Best-effort: a
+ * failed version probe still renders (prints `unknown`). Never throws.
+ */
+async function logRenderRuntime(ctx: RuntimeContext): Promise<void> {
+  try {
+    if (ctx.mode === 'docker') {
+      const version = await dockerDaliVersion(ctx.image, ctx.tag);
+      const { label } = describeRegistry(ctx.image);
+      process.stderr.write(`dali-ui runtime: ${version}  (docker · ${ctx.image}:${ctx.tag} — ${label})\n`);
+    } else {
+      const prefix = checkLocalReadiness({ daliPrefix: ctx.daliPrefix, baseDir: ctx.baseDir }).prefix;
+      const version = prefix ? await localDaliVersion(prefix) : 'unknown';
+      process.stderr.write(`dali-ui runtime: ${version}  (local · ${prefix ?? 'no prefix resolved'})\n`);
+    }
+  } catch {
+    /* diagnostics only — never block a render on the version probe */
+  }
+}
+
+/**
  * Render the templated harness for `resolved` at `config`'s device dimensions and
  * theme, returning the raw render result. Centralizes the WU-1 wiring so every
  * render site (one-shot, watch, verify) passes the SAME width/height to BOTH
@@ -791,11 +841,13 @@ interface RuntimeContext {
  * base directory used to locate `.dali/config.json` and a native prefix (the input
  * file's dir, or cwd for stdin/inline input).
  */
-function resolveRuntimeContext(parsed: RenderArgs, resolved: ResolvedInput): RuntimeContext {
+async function resolveRuntimeContext(parsed: RenderArgs, resolved: ResolvedInput): Promise<RuntimeContext> {
   const baseDir = resolved.sourcePath && !resolved.sourcePath.startsWith('<')
     ? path.dirname(path.resolve(resolved.sourcePath))
     : process.cwd();
-  const ref = resolveImageRef(parsed, baseDir);
+  // Auto-detect the registry (BART/GHCR) when nothing is configured, so a render without a
+  // prior `init` still avoids the throttled direct-GHCR pull on the corp network.
+  const ref = await resolveImageRefAuto(parsed, baseDir);
   return {
     mode: resolveRuntimeMode({ flag: parsed.runtime, baseDir }),
     image: ref.image,
@@ -806,6 +858,7 @@ function resolveRuntimeContext(parsed: RenderArgs, resolved: ResolvedInput): Run
 }
 
 async function renderWithConfig(resolved: ResolvedInput, config: RenderConfig, ctx: RuntimeContext) {
+  await logRenderRuntime(ctx);
   const slice = computeSlice(resolved);
   const doRender = (globals: string, body: string) =>
     render(
@@ -906,7 +959,7 @@ async function renderAndEmit(parsed: RenderArgs, resolved: ResolvedInput): Promi
   let workDir: string | undefined;
   try {
     const config = resolveRenderConfig(parsed);
-    const result = await renderWithConfig(resolved, config, resolveRuntimeContext(parsed, resolved));
+    const result = await renderWithConfig(resolved, config, await resolveRuntimeContext(parsed, resolved));
     workDir = result.workDir;
 
     // Build the annotated canonical tree (now carrying the M2 `mark`). This is the
@@ -991,7 +1044,7 @@ async function runVerifyOrUpdate(parsed: RenderArgs, resolved: ResolvedInput): P
   let workDir: string | undefined;
   try {
     const config = resolveRenderConfig(parsed);
-    const result = await renderWithConfig(resolved, config, resolveRuntimeContext(parsed, resolved));
+    const result = await renderWithConfig(resolved, config, await resolveRuntimeContext(parsed, resolved));
     workDir = result.workDir;
 
     const tree = attachMeta(
@@ -1088,7 +1141,9 @@ async function runListVersions(parsed: RenderArgs): Promise<number> {
  * is exit 11 with the error on stderr (stdout stays empty for the caller's parser).
  */
 async function runPull(parsed: RenderArgs): Promise<number> {
-  const { image, tag: defaultTag } = resolveImageRef(parsed);
+  // Auto-detect the registry (BART/GHCR) when nothing is configured — a bare `--pull` must
+  // avoid the throttled direct-GHCR blob pull that intermittently times out on the corp net.
+  const { image, tag: defaultTag } = await resolveImageRefAuto(parsed);
   // `--pull` alone (or `--pull` with no tag token) defaults to 'latest'; an
   // explicit `--image-tag` is NOT used to pick the pulled tag (the positional
   // `--pull <tag>` is the selector), but `--pull` with no tag falls back to the

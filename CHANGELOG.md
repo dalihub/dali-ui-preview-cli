@@ -1,5 +1,29 @@
 # Changelog
 
+## [0.9.2] - 2026-07-07
+
+### Fixed
+
+- **A bare render / `--pull` now auto-detects the registry (BART proxy on the corp network,
+  else GHCR) — no `init` required.** Previously only `dali-ui-preview-cli init` probed BART
+  and persisted it to `.dali/config.json`; a render or `--pull` run *without* `init` fell
+  through to the direct GHCR default and, inside the Samsung network, intermittently timed out
+  on the throttled GHCR blob pull. The render/pull path now mirrors the VS Code extension
+  (which auto-detects on every activation): when no image is configured (flag / `DALI_PREVIEW_IMAGE`
+  / `.dali/config.json`) it probes once, uses the BART proxy when reachable, and **persists the
+  result** so later renders and `doctor` reuse it with no re-probe. `doctor` stays network-free
+  (reads config); the first render is what persists the detected registry.
+
+### Added
+
+- **The render log now reports which dali-ui version actually rendered**, for both runtimes,
+  on **stderr** (stdout stays the JSON contract):
+  `dali-ui runtime: 2.5.28  (docker · <image>:<tag> — GHCR/BART)` or
+  `dali-ui runtime: 2.5.28  (local · <prefix>)`. Docker reads the `io.dalihub.dali.version`
+  image label (offline, no container run; falls back to a `dali_x.y.z` tag, else `unknown`);
+  local runs `pkg-config --modversion` against the native prefix — so a stale local prefix
+  (e.g. an old `2.0.0` build vs the code's `2.5.28`) is now visible at a glance.
+
 ## [0.9.1] - 2026-07-07
 
 ### Added
