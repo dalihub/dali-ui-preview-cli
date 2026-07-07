@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.9.0] - 2026-07-07
+
+### Changed
+
+- **Distribution is now GitHub-clone only — the CLI is intentionally not published to npm.**
+  Inside the Samsung corp network both public npm and `github.com` are proxied/gated, and the
+  install path verified to work in-house is a GitHub-clone install. All guides now lead with
+  it: **install once** with `npm i -g github:dalihub/dali-ui-preview-cli` and run the bare
+  `dali-ui-preview-cli` in the render loop (fast, no re-clone per render, no temp-file
+  buildup); **one-shot** with `npx -y github:dalihub/dali-ui-preview-cli …`. Updated the
+  README (EN/KO), the `AGENTS.md` verification-loop template, and the `dali-preview` skill.
+  The runtime-image delivery (docker pull of GHCR/BART) is unchanged. See
+  `docs/autoplan/adr/ADR-006-distribution-channel.md` (Update 2026-07-07).
+
+### Added
+
+- **`init` now appends `.dali/` to the project's `.gitignore`** (idempotent — creates the file
+  if absent, skips if already ignored) so render PNGs and the machine/network-specific
+  `.dali/config.json` don't get committed. The agent guides also tell the agent to keep render
+  outputs under `.dali/` and reuse a fixed filename instead of spraying new files each loop.
+
 ## [0.8.1] - 2026-07-07
 
 ### Changed

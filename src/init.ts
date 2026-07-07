@@ -70,6 +70,30 @@ function writeSkill(dir: string): string {
 }
 
 /**
+ * Ensure the project's `.gitignore` ignores the `.dali/` scratch dir so render PNGs and the
+ * machine/network-specific `config.json` don't get committed. Idempotent: skips if already
+ * ignored, creates the file if absent. Pure filesystem, so it is unit-tested with a tmp dir.
+ */
+export function ensureGitignore(root: string): 'created' | 'updated' | 'present' {
+  const file = path.join(root, '.gitignore');
+  const entry = '.dali/';
+  const comment = '# DALi UI preview render scratch (PNGs + machine-specific config)';
+  if (fs.existsSync(file)) {
+    const cur = fs.readFileSync(file, 'utf8');
+    const ignored = cur.split(/\r?\n/).some((l) => {
+      const t = l.trim();
+      return t === '.dali' || t === '.dali/' || t === '/.dali' || t === '/.dali/';
+    });
+    if (ignored) { return 'present'; }
+    const sep = cur.length === 0 || cur.endsWith('\n') ? '' : '\n';
+    fs.writeFileSync(file, `${cur}${sep}\n${comment}\n${entry}\n`);
+    return 'updated';
+  }
+  fs.writeFileSync(file, `${comment}\n${entry}\n`);
+  return 'created';
+}
+
+/**
  * Pick the runtime for `init`: an explicit flag wins; else docker if the daemon is
  * up; else local if the host is ready; else null (neither usable — write the docs
  * and skip the render). Pure so it is unit-tested without spawning anything.
@@ -89,9 +113,11 @@ export async function runInit(argv: string[]): Promise<number> {
     return 1;
   }
 
+  const root = findProjectRoot(dir);
   console.log(`Initializing DALi UI preview in ${dir}`);
   console.log(`  ${writeAgentsMd(dir)} AGENTS.md  (verification-loop instruction)`);
   console.log(`  wrote ${writeSkill(dir)}  (Claude Code skill)`);
+  console.log(`  ${ensureGitignore(root)} .gitignore  (ignores .dali/ render scratch)`);
 
   // Detect BOTH runtimes and choose. An explicit --docker/--local overrides; else
   // docker is preferred (reproducible), else a ready native runtime is used.
@@ -119,7 +145,6 @@ export async function runInit(argv: string[]): Promise<number> {
   const detectedImage = mode === 'docker' ? await detectDefaultImage() : undefined;
 
   // Persist the choice so subsequent renders default to it with no flag.
-  const root = findProjectRoot(dir);
   const cfg: DaliConfig = { runtime: mode };
   if (mode === 'local' && local.prefix) { cfg.daliPrefix = local.prefix; }
   if (detectedImage) { cfg.image = detectedImage; }
@@ -164,5 +189,7 @@ export async function runInit(argv: string[]): Promise<number> {
   console.log('');
   console.log(`✅ ${path.basename(dir)} is agent-ready. When you (or your coding agent) write DALi UI here,`);
   console.log('   the agent will render it, view the PNG, and fix it in a loop. See AGENTS.md.');
+  console.log('   Tip: install the CLI once so the loop runs the fast bare command (no re-clone):');
+  console.log('        npm i -g github:dalihub/dali-ui-preview-cli');
   return 0;
 }

@@ -61,13 +61,24 @@ dali-ui-preview-cli app.preview.dali.cpp --image out.png
 
 ## 설치
 
-설치 없이 npx로 즉석 실행:
+이 CLI는 **GitHub repo에서 바로** 설치합니다 — 의도적으로 **npm에는 퍼블리시하지 않습니다.** 아래 명령은 모두
+`dalihub/dali-ui-preview-cli`에서 설치/실행하며, `npm`/`npx`가 알아서 클론하고 빌드합니다(Node 18+ 필요).
+
+**한 번 설치(권장)** — `dali-ui-preview-cli`를 PATH에 올려 렌더 루프를 빠르게(렌더마다 재클론 없음), 임시 파일도 안 쌓입니다:
 
 ```bash
-npx dali-ui-preview-cli <input.cpp> --image out.png
+npm i -g github:dalihub/dali-ui-preview-cli
+dali-ui-preview-cli --version
 ```
 
-또는 소스에서:
+**또는 npx로 즉석 실행(설치 없이)** — 원샷엔 충분하지만, npx는 콜드런마다 재클론+재빌드하므로 반복 렌더 루프엔
+위의 전역 설치를 권장:
+
+```bash
+npx -y github:dalihub/dali-ui-preview-cli <input.cpp> --image out.png
+```
+
+**또는 소스에서:**
 
 ```bash
 git clone https://github.com/dalihub/dali-ui-preview-cli
@@ -79,7 +90,8 @@ node out/cli.js <input.cpp>
 npm link
 ```
 
-아래 예시는 모두 `dali-ui-preview-cli`를 사용합니다. 소스 체크아웃에서 실행할 때는 `node out/cli.js`로, 또는 `npx dali-ui-preview-cli`로 바꾸세요.
+아래 예시는 모두 `dali-ui-preview-cli`(전역 설치)를 사용합니다. 원샷은 `npx -y github:dalihub/dali-ui-preview-cli`로,
+소스 체크아웃에서는 `node out/cli.js`로 바꾸세요.
 
 ## 환경 점검 (프리플라이트)
 
@@ -419,7 +431,7 @@ dali-ui-preview-cli samples/hello-dali.preview.dali.cpp --image-tag dali_2.5.24
 - **결정론적입니다.** 같은 입력은 바이트 단위로 동일한 JSON을 렌더하므로, 트리 diff가 의미를 가지고 `--baseline-tree` 비교가 정확합니다.
 - **토큰 한도.** `--max-depth` / `--max-nodes`로 트리를 컨텍스트 창 안에 유지하세요.
 - **분기 가능한 종료 코드.** "도구가 실패"(1/10/11/12/13)와 "렌더는 됐지만 다름"(20)을 텍스트 파싱 없이 구분 — 작성→렌더→대조 루프에 이상적입니다.
-- **에이전트 온보딩 (한 줄):** DALi 프로젝트에서 `npx -y dali-ui-preview-cli init` (npm 퍼블리시 전에는 `npx -y github:dalihub/dali-ui-preview-cli init`) 을 한 번 실행하면 — `AGENTS.md`(검증-루프 지시문, Codex·Cursor·Claude Code 등이 읽음) + `.claude/skills/dali-preview/SKILL.md`(Claude 자동발동)를 심고, **Docker와 로컬 런타임을 모두 감지해 하나를 골라 `.dali/config.json`에 저장**한 뒤(Docker면 이미지 pull) 샘플 1회 렌더로 준비를 끝냅니다. 이후 그 프로젝트에서 DALi UI를 작성하면 에이전트가 **렌더 → PNG 확인 → 수정** 루프를 돕니다. (Docker 엔진 설치만 사람 몫 — sudo 필요. 로컬을 강제하려면 `init --local`.) Claude Code에서 전역으로 쓰려면 `dali-tools` 마켓플레이스의 `dali-preview` 스킬을 설치하세요.
+- **에이전트 온보딩 (한 줄):** DALi 프로젝트에서 `npx -y github:dalihub/dali-ui-preview-cli init` 을 한 번 실행하면(이 CLI는 npm이 아니라 **GitHub에서 클론 설치**됩니다) — `AGENTS.md`(검증-루프 지시문, Codex·Cursor·Claude Code 등이 읽음) + `.claude/skills/dali-preview/SKILL.md`(Claude 자동발동)를 심고, **`.dali/`를 `.gitignore`에 추가**(렌더 PNG·머신별 config가 git에 안 섞임)하며, **Docker와 로컬 런타임을 모두 감지해 하나를 골라 `.dali/config.json`에 저장**한 뒤(Docker면 이미지 pull) 샘플 1회 렌더로 준비를 끝냅니다. 이후 렌더 루프를 빠르게 하려면 `npm i -g github:dalihub/dali-ui-preview-cli`로 한 번 설치해두고 bare `dali-ui-preview-cli`로 부르세요. 그 프로젝트에서 DALi UI를 작성하면 에이전트가 **렌더 → PNG 확인 → 수정** 루프를 돕니다. (Docker 엔진 설치만 사람 몫 — sudo 필요. 로컬을 강제하려면 `init --local`.) Claude Code에서 전역으로 쓰려면 `dali-tools` 마켓플레이스의 `dali-preview` 스킬을 설치하세요.
 
 ## 라이선스
 

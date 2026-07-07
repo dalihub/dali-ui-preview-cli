@@ -65,13 +65,26 @@ Selection precedence (highest first): `--runtime` / `--local` flag → `DALI_PRE
 
 ## Install
 
-Run it ad-hoc with npx (no install):
+This CLI is distributed **straight from the GitHub repo** — it is intentionally **not
+published to npm**. Every command below installs/runs it from `dalihub/dali-ui-preview-cli`,
+which `npm`/`npx` clone and build for you (Node 18+ required).
+
+**Install once (recommended)** — puts `dali-ui-preview-cli` on your `PATH`, so the render
+loop is fast (no re-clone per render) and nothing temporary piles up:
 
 ```bash
-npx dali-ui-preview-cli <input.cpp> --image out.png
+npm i -g github:dalihub/dali-ui-preview-cli
+dali-ui-preview-cli --version
 ```
 
-Or from source:
+**Or run ad-hoc with npx (no install)** — fine for a one-shot; note npx re-clones and
+re-builds on each cold run, so prefer the global install for a render loop:
+
+```bash
+npx -y github:dalihub/dali-ui-preview-cli <input.cpp> --image out.png
+```
+
+**Or from source:**
 
 ```bash
 git clone https://github.com/dalihub/dali-ui-preview-cli
@@ -83,7 +96,9 @@ node out/cli.js <input.cpp>
 npm link
 ```
 
-All examples below use `dali-ui-preview-cli`; substitute `node out/cli.js` when running from a source checkout, or `npx dali-ui-preview-cli`.
+All examples below use `dali-ui-preview-cli` (the global install); substitute
+`npx -y github:dalihub/dali-ui-preview-cli` for a one-shot, or `node out/cli.js` from a
+source checkout.
 
 ## Use it from an AI coding agent
 
@@ -95,14 +110,16 @@ loop** — instead of guessing. You set this up **once per project**.
 In your DALi project, run:
 
 ```bash
-npx -y dali-ui-preview-cli init
-# before this package is published to npm, run it from GitHub:
-#   npx -y github:dalihub/dali-ui-preview-cli init
+# bootstrap: clones the CLI from GitHub, builds it, and seeds this project
+npx -y github:dalihub/dali-ui-preview-cli init
+# recommended: also install it once so the render loop doesn't re-clone each time:
+#   npm i -g github:dalihub/dali-ui-preview-cli
 ```
 
 `init` seeds the project so any agent picks it up automatically:
 - writes **`AGENTS.md`** — the verify-loop instruction, read by Codex, Cursor, Claude Code, …
 - writes **`.claude/skills/dali-preview/SKILL.md`** — Claude Code auto-activates it
+- adds **`.dali/`** to the project's `.gitignore` — render PNGs + machine-specific config stay out of git
 - **detects both runtimes**, picks one (Docker if available, else a ready local runtime — or force it with `init --docker` / `init --local`), **persists the choice to `.dali/config.json`**, then (Docker only) pulls the image and smoke-renders a sample
 
 From then on, when you (or your agent) write DALi UI in that project, the agent runs the CLI,

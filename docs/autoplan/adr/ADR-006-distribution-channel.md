@@ -1,7 +1,29 @@
 # ADR-006 — Distribution channel
 
 ## Status
-accepted
+accepted — **channel superseded 2026-07-07** (npm publish dropped; see "Update" at the bottom)
+
+## Update (2026-07-07) — GitHub-clone install, npm publish dropped
+A release-time constraint invalidated the "publish to npm" decision below. Inside the Samsung
+corp network **both** public npm (`registry.npmjs.org`) and `github.com` are proxied/gated —
+the same situation that forces the runtime image through the BART GHCR proxy instead of
+`ghcr.io`. The only install path **verified to work in-house** is a **GitHub-clone install**:
+`npx -y github:dalihub/dali-ui-preview-cli …` and `npm i -g github:dalihub/dali-ui-preview-cli`
+(npm clones the repo and builds it via the `prepare` script). The maintainer has **no plan to
+publish to npm**.
+
+Revised decision: the CLI ships **from the GitHub repo only**.
+- **Install once:** `npm i -g github:dalihub/dali-ui-preview-cli` → bare `dali-ui-preview-cli`
+  in the render loop (fast; no re-clone per render; no temp-file buildup).
+- **One-shot:** `npx -y github:dalihub/dali-ui-preview-cli …` (re-clones+builds each cold run).
+- The runtime-image delivery (docker pull of GHCR/BART) is unchanged — the CLI still only
+  orchestrates it, so the clone stays small.
+- `init` additionally appends `.dali/` to the project `.gitignore` so render PNGs and the
+  machine/network-specific `config.json` don't get committed.
+- README (EN/KO), the `AGENTS.md` template, and the `dali-preview` skill were updated to the
+  above forms.
+
+The original decision and alternatives are retained below for the record.
 
 ## Context
 M6 (plan.md F6.3) requires the CLI be packaged for "the chosen distribution channel" so an external user can install and run it from outside the dev tree, and F6.5 requires a tagged GitHub release with artifacts + changelog. project-goal.md states the eventual target is a GitHub release and emphasizes the AI-agent install path. research.md candidates: **npm package (npx)**, **GitHub Releases pre-built binary**, **Docker wrapping**.

@@ -15,10 +15,12 @@ edit loop:
 
 1. Write/edit the DALi UI code (a builder body ending in `return <root>;`, or a
    `*.preview.dali.cpp` file).
-2. Render it:
+2. Render it. Write render outputs under **`.dali/`** and **reuse the same filename** each
+   iteration (overwrite — don't spray `out1.png`, `out2.png`, …; `.dali/` is git-ignored
+   scratch, and the tree goes to stdout, not a file):
    ```bash
-   npx -y dali-ui-preview-cli <file-or-> --image .dali/preview.png
-   # not on npm yet? run it straight from GitHub (no npm publish needed):
+   dali-ui-preview-cli <file-or-> --image .dali/preview.png
+   # not installed? one-shot straight from GitHub (no install):
    #   npx -y github:dalihub/dali-ui-preview-cli <file-or-> --image .dali/preview.png
    ```
 3. **Read `.dali/preview.png`** to SEE the layout, and parse the JSON scene tree from
@@ -26,10 +28,14 @@ edit loop:
 4. If it's wrong, fix the code and go back to step 2. Repeat until it looks right.
 
 ### Setup (once)
-**Before your first render, run the preflight** — don't discover a missing runtime
-mid-task:
+**Install the CLI once** — it ships from GitHub (not npm); a global install keeps the render
+loop fast (no re-clone per render) and leaves nothing temporary behind:
 ```bash
-npx -y dali-ui-preview-cli doctor   # one JSON line, no network; exit 0 ready / 13 none
+npm i -g github:dalihub/dali-ui-preview-cli
+```
+**Then run the preflight** — don't discover a missing runtime mid-task:
+```bash
+dali-ui-preview-cli doctor   # one JSON line, no network; exit 0 ready / 13 none
 ```
 It reports `{ready, recommended, configured, runtimes:{docker,local}}`. If `ready:true`,
 render with the `recommended` runtime. If `ready:false`, **relay each runtime's `issues`
@@ -43,7 +49,7 @@ There are **two runtimes** — `doctor` reports both; **Docker is the default**.
 - **Docker (default, reproducible).** Docker must be installed and usable. If it isn't,
   ask the human — installing Docker needs `sudo`, which you should not do silently. The
   runtime image (~290 MB) **auto-pulls on the first render**, or pull it explicitly:
-  `npx -y dali-ui-preview-cli --pull`. The image tracks a **DALi release** (currently
+  `dali-ui-preview-cli --pull`. The image tracks a **DALi release** (currently
   `dali-ui` **2.5.26** — the API below targets it); `--list-versions` prints the exact
   version and what's available, `--image-tag <dali_x.y.z>` pins one. The image is
   **cached** once pulled — run `--pull` to upgrade when a newer runtime is published.
