@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.10.4] - 2026-07-08
+
+### Changed
+- Agent skill: document which cross-file forms the preview inlines (namespace/const/constexpr constants + View-returning free functions via relative `#include`) vs. what silently becomes a grey placeholder (`#define` macros, multi-line inits, non-relative/system includes, out-of-project symbols); add guidance for screens that cannot render faithfully; note dali-ui 2.5.28.
+
 ## [0.10.3] - 2026-07-08
 
 ### Fixed

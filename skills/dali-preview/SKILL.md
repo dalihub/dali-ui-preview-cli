@@ -59,7 +59,7 @@ There are **two runtimes** — `doctor` reports both; **Docker is the default**:
 - **Docker (default, reproducible).** Docker must be installed and usable. If it isn't, ask
   the human — installing Docker needs `sudo`, which you should not do silently. The runtime
   image (~290 MB) **auto-pulls on the first render**, or: `dali-ui-preview-cli --pull`.
-  **Version** tracks a DALi release (currently `dali-ui` **2.5.26** — the API here targets it);
+  **Version** tracks a DALi release (currently `dali-ui` **2.5.28** — the API here targets it);
   `--list-versions` shows exact/available versions, `--image-tag <dali_x.y.z>` pins one. The
   image is cached, so run `--pull` to upgrade when a newer runtime is published.
 - **Local (native, no Docker).** For a host that already has a built DALi install plus
@@ -120,13 +120,35 @@ render so it resolves in **both** runtimes — no manual mounting. An unresolvab
 (`http(s)://`) URL renders a **gray placeholder** at the ImageView's size (layout preserved),
 so a gray box means the path didn't resolve — fix the path or make the file local.
 
-**Cross-file components.** To use a helper/type/const defined in another project file,
-`#include "path/to/it.h"` (relative path) at the top of the preview — the CLI follows
-project-local includes, **inlines** those definitions, and renders. Limits: only
-header-inlinable defs inside the project (folder with `.git`/`package.json`); a symbol it
-can't find becomes a **grey placeholder** (so a blank box means you forgot to `#include`
-it); errors *inside* a helper point at that file — fix them there; no separate-compilation
-linking. For full multi-file *app* preview, the VS Code extension's slicer is more complete.
+**Colors, padding, and components from other files.** To use a color/padding constant or a
+reusable component defined elsewhere, `#include "relative/path.h"` at the top of the preview —
+the CLI follows project-local (quoted, relative) includes, **inlines** the definitions, and
+renders. But only specific forms are inlinable:
+
+- ✅ a **`namespace` member** or a **`const`/`constexpr`** constant (colors/padding/sizes), and
+  a **`View`-returning free function** (components). `#include` the header, then use
+  `UiColor(theme::ACCENT)`, `Extents(theme::PAD, …)`, `MakeCard(…)`.
+- ❌ a **`#define` macro** (change it to a `constexpr`/namespace constant), a **multi-line
+  initializer**, a header reached only through a build-system `-I` flag or a `<system>`
+  include, or anything outside the project folder (the one with `.git`/`package.json`).
+
+A symbol it can't resolve becomes a **grey/blank placeholder** — grey `0x888888`, an empty
+View, or `"Sample"` text — **with no error**. So a grey color or blank box means "not found":
+make it a namespace/const constant or a free function and add the relative `#include`. Errors
+*inside* a helper point at that file — fix them there; there's no separate-compilation linking.
+For full multi-file *app* preview, the VS Code extension's slicer is more complete.
+
+**What can't be previewed faithfully.** A preview is one static frame. When something can't
+render for real, build the closest slice and **tell the human what you approximated** — don't
+present a placeholder render as if it were faithful:
+
+- **Runtime / async data** (network, DB, `GetUser()`): inject **sample data** and say so.
+- **Classes needing services / view-models**: pass a **sample instance**, or wrap just the
+  view-building part in a small factory rather than constructing the whole controller.
+- **Manager-resolved theme / locale / app singletons**: use literal values — they aren't set
+  up outside the running app.
+- **Focus / animation / scroll / selection states**: a static frame is one moment — render the
+  representative state and note in the tree/to the human what is dynamic.
 
 **Output paths.** `--image`'s parent folder is auto-created; but if you redirect stdout into
 a new subfolder (`> out/tree.json`), `mkdir -p out` first.
