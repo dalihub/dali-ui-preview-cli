@@ -128,9 +128,13 @@ renders. But only specific forms are inlinable:
 - ✅ a **`namespace` member** or a **`const`/`constexpr`** constant (colors/padding/sizes), and
   a **`View`-returning free function** (components). `#include` the header, then use
   `UiColor(theme::ACCENT)`, `Extents(theme::PAD, …)`, `MakeCard(…)`.
-- ❌ a **`#define` macro** (change it to a `constexpr`/namespace constant), a **multi-line
-  initializer**, a header reached only through a build-system `-I` flag or a `<system>`
-  include, or anything outside the project folder (the one with `.git`/`package.json`).
+- ❌ a **value/component in a SEPARATE MODULE or LIBRARY** — a different build unit (its header
+  reached via a build-system `-I` flag, an SDK / `<system>` include, or a folder outside this
+  project). The CLI is a **lightweight source slicer, not a full build**, so it only follows
+  **relative** quoted `#include`s inside this project — it can't cross module/build boundaries.
+  (A full-build previewer like Jetpack Compose resolves cross-module values; this one can't —
+  inline the value, or move its header where a relative `#include` reaches it.)
+- ❌ a **`#define` macro** (use a `constexpr`/namespace constant) or a **multi-line initializer**.
 
 A symbol it can't resolve becomes a **grey/blank placeholder** — grey `0x888888`, an empty
 View, or `"Sample"` text — **with no error**. So a grey color or blank box means "not found":
@@ -138,17 +142,21 @@ make it a namespace/const constant or a free function and add the relative `#inc
 *inside* a helper point at that file — fix them there; there's no separate-compilation linking.
 For full multi-file *app* preview, the VS Code extension's slicer is more complete.
 
-**What can't be previewed faithfully.** A preview is one static frame. When something can't
-render for real, build the closest slice and **tell the human what you approximated** — don't
-present a placeholder render as if it were faithful:
+**What can't be previewed faithfully.** A preview renders one static frame in a sandbox (no
+network, no file/DB access) — the same fundamental limit every static preview tool has,
+including **Jetpack Compose Preview**. Build the closest slice and **tell the human what you
+approximated** — don't present a placeholder render as if it were faithful:
 
 - **Runtime / async data** (network, DB, `GetUser()`): inject **sample data** and say so.
-- **Classes needing services / view-models**: pass a **sample instance**, or wrap just the
-  view-building part in a small factory rather than constructing the whole controller.
-- **Manager-resolved theme / locale / app singletons**: use literal values — they aren't set
-  up outside the running app.
-- **Focus / animation / scroll / selection states**: a static frame is one moment — render the
-  representative state and note in the tree/to the human what is dynamic.
+  (Compose Preview's sandbox blocks network/file too.)
+- **Classes built by dependency injection** (view-models needing services / repositories): pass
+  a **sample instance**, or wrap just the view-building part in a factory. (Same as Compose
+  Preview with Hilt view-models.)
+- **Manager-resolved theme / locale / app singletons**: use literal values (or the `--theme` /
+  `--resolution` flags for theme and size).
+- **Live states — scroll position, selection, focus ring, in-progress animation**: the CLI
+  renders a single static frame, so it can't drive these — render the representative state and
+  note in the tree what is dynamic.
 
 **Output paths.** `--image`'s parent folder is auto-created; but if you redirect stdout into
 a new subfolder (`> out/tree.json`), `mkdir -p out` first.

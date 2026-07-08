@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.10.5] - 2026-07-08
+
+### Changed
+- Agent skill accuracy pass: a value/component in a SEPARATE module/library (different build unit, `-I`/`<system>` include, outside the project) is NOT resolved by the source slicer → grey placeholder (a full-build previewer like Compose resolves cross-module; this one does not — inline or relative-`#include` it). Clarify that the fundamental limits (real/async data, DI-built view-models) are inherent to sandboxed static preview — the same in Jetpack Compose Preview — so inject sample data.
+
 ## [0.10.4] - 2026-07-08
 
 ### Changed
