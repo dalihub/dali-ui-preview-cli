@@ -49,4 +49,17 @@ if (n < 2) {
   process.exit(6);
 }
 
+// 3) All drawn nodes are on-screen (click-to-code bounds correctness). Use the
+//    root's own bounds as the window rect — the exporter reports the window at
+//    root, so this is self-describing regardless of the configured size.
+const { checkTreeOnScreen } = require('../../out/onScreenCheck.js');
+const root = tree.root || tree;
+const W = (root.bounds && root.bounds.w) || width;
+const H = (root.bounds && root.bounds.h) || height;
+const onScreenErr = checkTreeOnScreen(tree, W, H);
+if (onScreenErr) {
+  console.error(onScreenErr);
+  process.exit(9);
+}
+
 console.log(`  ✓ non-blank PNG ${width}x${height} (${seen.size >= 2 ? '≥2' : seen.size} colors), tree ${n} nodes`);
