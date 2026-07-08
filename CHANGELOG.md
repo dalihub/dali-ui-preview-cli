@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.10.3] - 2026-07-08
+
+### Fixed
+
+- **Upgrading over a previously-broken install no longer leaves a non-executable CLI.** The common
+  real-world path — a user who already installed a broken pre-0.10.2 build runs the same
+  `npm i -g github:dalihub/dali-ui-preview-cli` to get the new version — took npm's "changed 1
+  package" reify path rather than a fresh "added" one. That path replaced the old dangling symlink
+  with a real directory (good) but did **not** set the executable bit on the `bin` target, so
+  `out/cli.js` landed as `0644` and running `dali-ui-preview-cli` failed with **`Permission
+  denied`**. Root cause: `out/cli.js` was committed to git as mode `100644`; only a clean install
+  re-chmods it. It is now committed as **`100755`**, so the packed tarball carries the executable
+  bit and the CLI works regardless of whether npm takes the added-or-changed path (verified:
+  broken-0.10.1 → this version upgrade now yields an executable, runnable CLI).
+
 ## [0.10.2] - 2026-07-07
 
 ### Fixed
