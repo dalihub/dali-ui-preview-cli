@@ -7,11 +7,27 @@
 // Not yet wired into CLI output (that is M5). Logic otherwise unchanged.
 // ─────────────────────────────────────────────────────────────────────────────
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.RUNTIME_API_SKEW_HINT = void 0;
+exports.detectRuntimeApiSkew = detectRuntimeApiSkew;
 exports.parseGccErrors = parseGccErrors;
 exports.getPluginCodeOffset = getPluginCodeOffset;
 exports.getHarnessCodeOffset = getHarnessCodeOffset;
 exports.formatRawError = formatRawError;
 exports.formatErrorsForDisplay = formatErrorsForDisplay;
+const skewSignature_1 = require("./skewSignature");
+/**
+ * Actionable hint appended when the compile failure looks like a dali-ui
+ * runtime-API skew (a member the runtime image no longer has). The fix is to
+ * refresh the runtime image (`dali-ui-preview --pull` / a newer tag), NOT to
+ * change the preview code. Mirrors the extension's RUNTIME_API_SKEW_HINT.
+ */
+exports.RUNTIME_API_SKEW_HINT = '\n\nThis looks like a stale DALi runtime: the image is missing a dali-ui ' +
+    'API this build uses. Refresh the runtime image (pull the latest / matching ' +
+    'tag) rather than changing the preview code.';
+/** True when g++ stderr carries the dali-ui runtime-API-skew signature. */
+function detectRuntimeApiSkew(stderr) {
+    return (0, skewSignature_1.isRuntimeApiSkew)(stderr);
+}
 /**
  * Regex for a GCC diagnostic line:
  *   filename:LINE:COLUMN: error|warning|note: MESSAGE
@@ -118,7 +134,8 @@ function formatRawError(raw) {
     // into "Line 5:3: error: …"
     const mapped = candidate.replace(/^[^\s:]+:(\d+):(\d+):\s*(error|warning|note):\s*/i, 'Line $1, Col $2: ');
     // Trim to a reasonable display length
-    return mapped.length > 200 ? mapped.slice(0, 197) + '…' : mapped;
+    const trimmed = mapped.length > 200 ? mapped.slice(0, 197) + '…' : mapped;
+    return detectRuntimeApiSkew(raw) ? trimmed + exports.RUNTIME_API_SKEW_HINT : trimmed;
 }
 /**
  * Format parsed errors into a human-readable string.

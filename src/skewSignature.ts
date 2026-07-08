@@ -1,0 +1,15 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// VENDORED from paperclip src/skewSignature.ts (ADR-007) — the CLI must not import
+// across repos. Keep byte-identical to the parent's regex; the shared-library
+// consolidation is M3.
+// ─────────────────────────────────────────────────────────────────────────────
+// Shared dali-ui runtime-API-skew signature. When a dali-ui release renames or
+// removes a member, g++ emits: `'class Dali::Ui::X' has no member named 'Y'`.
+// g++ uses Unicode curly quotes (U+2018/U+2019), NOT ASCII — the char class must
+// accept both. Matches ANY missing member on a `Dali::Ui::` type (future-proof).
+export const RUNTIME_API_SKEW_RE =
+    /Dali::Ui::\w+['‘’]?\s+has no member named\s+['‘’]?\w+/;
+
+export function isRuntimeApiSkew(stderr: string): boolean {
+    return RUNTIME_API_SKEW_RE.test(String(stderr ?? ''));
+}

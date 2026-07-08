@@ -8,6 +8,7 @@ import {
     getHarnessCodeOffset,
     parseGccErrors,
     formatRawError,
+    detectRuntimeApiSkew,
     ParsedError,
 } from '../../errorParser';
 
@@ -68,6 +69,19 @@ describe('errorParser', () => {
                 '\n',
             );
             expect(formatRawError(raw)).to.equal('Line 2, Col 1: the real error');
+        });
+    });
+
+    describe('detectRuntimeApiSkew / formatRawError hint', () => {
+        const skew = '/tmp/x/preview_harness.cpp:5:3: error: ‘class Dali::Ui::UiConfig’ has no member named ‘SetAlwaysShowFocus’';
+        it('detects a runtime-API skew', () => {
+            expect(detectRuntimeApiSkew(skew)).to.equal(true);
+        });
+        it('appends the stale-runtime hint in formatRawError', () => {
+            expect(formatRawError(skew)).to.contain('stale DALi runtime');
+        });
+        it('does not append the hint to an ordinary error', () => {
+            expect(formatRawError('/tmp/x/preview_harness.cpp:5:3: error: expected ; before }')).to.not.contain('stale DALi runtime');
         });
     });
 });

@@ -6,11 +6,29 @@
 // Not yet wired into CLI output (that is M5). Logic otherwise unchanged.
 // ─────────────────────────────────────────────────────────────────────────────
 
+import { isRuntimeApiSkew } from './skewSignature';
+
 export interface ParsedError {
     line: number;
     column: number;
     message: string;
     severity: 'error' | 'warning' | 'note';
+}
+
+/**
+ * Actionable hint appended when the compile failure looks like a dali-ui
+ * runtime-API skew (a member the runtime image no longer has). The fix is to
+ * refresh the runtime image (`dali-ui-preview --pull` / a newer tag), NOT to
+ * change the preview code. Mirrors the extension's RUNTIME_API_SKEW_HINT.
+ */
+export const RUNTIME_API_SKEW_HINT =
+    '\n\nThis looks like a stale DALi runtime: the image is missing a dali-ui ' +
+    'API this build uses. Refresh the runtime image (pull the latest / matching ' +
+    'tag) rather than changing the preview code.';
+
+/** True when g++ stderr carries the dali-ui runtime-API-skew signature. */
+export function detectRuntimeApiSkew(stderr: string): boolean {
+    return isRuntimeApiSkew(stderr);
 }
 
 /**
@@ -143,7 +161,8 @@ export function formatRawError(raw: string): string {
     );
 
     // Trim to a reasonable display length
-    return mapped.length > 200 ? mapped.slice(0, 197) + '…' : mapped;
+    const trimmed = mapped.length > 200 ? mapped.slice(0, 197) + '…' : mapped;
+    return detectRuntimeApiSkew(raw) ? trimmed + RUNTIME_API_SKEW_HINT : trimmed;
 }
 
 /**
