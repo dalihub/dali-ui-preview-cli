@@ -13,8 +13,13 @@ import {
     pickFallbackTag,
     pullWithFallback,
     ensureImageWithFallback,
+    pullWithRegistryFallback,
+    analyzePullError,
+    describeFailure,
+    buildDownloadFailureGuidance,
     EnsureDeps,
 } from '../../imageManager';
+import { alternateImage, GHCR_IMAGE, BART_PROXY_IMAGE, BART_PROXY_HOST, GHCR_HOST } from '../../registry';
 
 const IMG = 'ghcr.io/test/dali-preview-runtime';
 
@@ -121,5 +126,105 @@ describe('ensureImageWithFallback', () => {
         const tag = await ensureImageWithFallback(IMG, 'latest', d);
         expect(tag).to.equal('dali_2.5.28-9d55242');
         expect(d.pinned).to.deep.equal(['dali_2.5.28-9d55242']);
+    });
+});
+
+describe('analyzePullError (shared diagnosis)', () => {
+    it('classifies auth (first, wins over a wrapping network frame)', () => {
+        expect(analyzePullError('received unexpected HTTP status: 401').category).to.equal('auth');
+        expect(analyzePullError('httpReadSeeker: failed open: failed to authorize').category).to.equal('auth');
+    });
+    it('classifies cert / dns / network / notfound / unknown', () => {
+        expect(analyzePullError('x509: certificate signed by unknown authority').category).to.equal('cert');
+        expect(analyzePullError('dial tcp: lookup ghcr.io: no such host').category).to.equal('dns');
+        expect(analyzePullError('dial tcp: i/o timeout').category).to.equal('network');
+        expect(analyzePullError('manifest unknown').category).to.equal('notfound');
+        expect(analyzePullError('some novel failure').category).to.equal('unknown');
+    });
+});
+
+describe('describeFailure (host-aware WHY/FIX)', () => {
+    it('BART cert failure → bypass the corporate proxy for .samsung.net', () => {
+        expect(describeFailure('cert', BART_PROXY_HOST).fix).to.match(/\.samsung\.net/);
+    });
+    it('GHCR cert failure → install the proxy CA in the system store', () => {
+        expect(describeFailure('cert', GHCR_HOST).fix.toLowerCase()).to.match(/ca|trust store/);
+    });
+    it('BART dns failure → off the corp network/VPN', () => {
+        expect(describeFailure('dns', BART_PROXY_HOST).fix.toLowerCase()).to.match(/vpn|corporate network/);
+    });
+});
+
+describe('buildDownloadFailureGuidance (names every server)', () => {
+    it('lists each registry with WHY/FIX and mentions the local runtime', () => {
+        const text = buildDownloadFailureGuidance([
+            { label: 'BART proxy (Samsung internal)', host: BART_PROXY_HOST, error: 'x509: certificate signed by unknown authority' },
+            { label: 'GHCR (GitHub)', host: GHCR_HOST, error: 'dial tcp: i/o timeout' },
+        ]);
+        expect(text).to.match(/BART proxy \(Samsung internal\)/);
+        expect(text).to.match(/GHCR \(GitHub\)/);
+        expect(text).to.match(/Why:/);
+        expect(text).to.match(/Fix:/);
+        expect(text).to.match(/all failed/);
+        expect(text.toLowerCase()).to.match(/local.*runtime/);
+    });
+    it('singular header for a single attempt', () => {
+        const t = buildDownloadFailureGuidance([{ label: 'GHCR (GitHub)', host: GHCR_HOST, error: 'manifest unknown' }]);
+        expect(t).to.match(/Tried:/);
+        expect(t).to.not.match(/registries/);
+    });
+});
+
+describe('pullWithRegistryFallback (cross-registry BART⇄GHCR fallback)', () => {
+    // Deps whose pull FAILS for one host and SUCCEEDS for the other, keyed by image.
+    function regDeps(failHosts: string[]): EnsureDeps & { pulled: string[]; tagged: [string, string][] } {
+        const pulled: string[] = [];
+        const tagged: [string, string][] = [];
+        return {
+            pulled, tagged,
+            hasLocal: async () => false,
+            pull: async (image: string, tag: string) => {
+                const host = image.slice(0, image.indexOf('/'));
+                if (failHosts.includes(host)) { throw new Error('x509: certificate signed by unknown authority'); }
+                pulled.push(`${image}:${tag}`);
+                return { ref: `${image}:${tag}`, ok: true } as any;
+            },
+            listTags: async () => ['latest', 'dali_2.5.28-9d55242'],
+            alternateImage,
+            tagImage: async (s: string, t: string) => { tagged.push([s, t]); },
+        } as any;
+    }
+    // Immutable tag → no tag fallback → only the cross-registry path is exercised.
+    const IMMUTABLE = 'dali_2.5.28-9d55242';
+
+    it('falls back to the alternate registry and aliases it to the resolved name', async () => {
+        const d = regDeps([BART_PROXY_HOST]); // BART fails, GHCR succeeds
+        const res = await pullWithRegistryFallback(BART_PROXY_IMAGE, IMMUTABLE, d);
+        expect(res.image).to.equal(BART_PROXY_IMAGE);       // resolved name unchanged (aliased)
+        expect(res.tag).to.equal(IMMUTABLE);
+        expect(res.source).to.equal(GHCR_HOST);             // bytes came from GHCR
+        expect(d.pulled).to.deep.equal([`${GHCR_IMAGE}:${IMMUTABLE}`]);
+        expect(d.tagged).to.deep.equal([[`${GHCR_IMAGE}:${IMMUTABLE}`, `${BART_PROXY_IMAGE}:${IMMUTABLE}`]]);
+    });
+
+    it('rejects with multi-registry guidance when BOTH registries fail', async () => {
+        const d = regDeps([BART_PROXY_HOST, GHCR_HOST]);
+        let msg = '';
+        try { await pullWithRegistryFallback(BART_PROXY_IMAGE, IMMUTABLE, d); }
+        catch (e) { msg = (e as Error).message; }
+        expect(msg).to.match(/all failed/);
+        expect(msg).to.match(/BART proxy/);
+        expect(msg).to.match(/GHCR/);
+        expect(d.tagged).to.deep.equal([]); // nothing aliased
+    });
+
+    it('reports a single failure (no fallback) for a custom image with no counterpart', async () => {
+        const custom = 'registry.example.com/team/img';
+        const d = regDeps(['registry.example.com']);
+        let msg = '';
+        try { await pullWithRegistryFallback(custom, IMMUTABLE, d); }
+        catch (e) { msg = (e as Error).message; }
+        expect(msg).to.match(/Tried:/);
+        expect(msg).to.not.match(/registries/); // single attempt, no cross-registry
     });
 });

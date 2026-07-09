@@ -34,14 +34,15 @@ import {
   listVersions,
   pullImage,
   localTags,
-  pullWithFallback,
-  ensureImageWithFallback,
+  tagImage,
+  ensureImageWithRegistryFallback,
+  pullWithRegistryFallback,
   EnsureDeps,
 } from './imageManager';
 import { listRemoteTags } from './registryClient';
 import { buildSlice } from './sliceBuilder';
 import { resolveProjectIncludes, findProjectRoot } from './sliceSources';
-import { detectDefaultImage, describeRegistry } from './registry';
+import { detectDefaultImage, describeRegistry, alternateImage } from './registry';
 import { dockerDaliVersion, localDaliVersion } from './runtimeVersion';
 import { buildTree, MinimalNode } from './treeModel';
 import { parseGccErrors, formatRawError } from './errorParser';
@@ -784,6 +785,10 @@ function makeEnsureDeps(baseDir: string): EnsureDeps {
       } catch { /* best-effort pin: read-only dir / no project root */ }
     },
     warn: (message) => process.stderr.write(`dali-ui-preview-cli: ${message}\n`),
+    // Cross-registry fallback: if the resolved host fails outright, retry its BART⇄GHCR
+    // counterpart and alias it to the resolved name so later renders reuse it.
+    alternateImage,
+    tagImage,
   };
 }
 
@@ -887,7 +892,7 @@ async function resolveRuntimeContext(parsed: RenderArgs, resolved: ResolvedInput
   // failing the render. Agents call render directly (no prior `--pull`), so this can't rely on one.
   // No-op when the image is already local. Local mode doesn't use the image.
   const tag = mode === 'docker'
-    ? await ensureImageWithFallback(ref.image, ref.tag, makeEnsureDeps(baseDir))
+    ? (await ensureImageWithRegistryFallback(ref.image, ref.tag, makeEnsureDeps(baseDir))).tag
     : ref.tag;
   return {
     mode,
@@ -1198,11 +1203,13 @@ async function runPull(parsed: RenderArgs): Promise<number> {
     return EXIT.DOCKER_UNAVAILABLE;
   }
   try {
-    // Self-heal a rolling tag the corp proxy can't serve (`latest`) → newest immutable, pinned to
-    // config so later renders reuse it. `--pull` deliberately re-pulls even if local (a refresh).
-    const landedTag = await pullWithFallback(image, tag, makeEnsureDeps(process.cwd()));
-    const out: Record<string, unknown> = { pulled: `${image}:${landedTag}`, ok: true };
-    if (landedTag !== tag) { out.requestedTag = tag; out.pinnedTag = landedTag; }
+    // Self-heal a rolling tag the corp proxy can't serve (`latest`) → newest immutable (TAG
+    // fallback), AND if the resolved registry fails outright, fall back to the OTHER registry
+    // (BART⇄GHCR) and alias it to the resolved name (REGISTRY fallback). `--pull` deliberately
+    // re-pulls even if local (a refresh). `source` records which server actually served it.
+    const landed = await pullWithRegistryFallback(image, tag, makeEnsureDeps(process.cwd()));
+    const out: Record<string, unknown> = { pulled: `${landed.image}:${landed.tag}`, ok: true, source: landed.source };
+    if (landed.tag !== tag) { out.requestedTag = tag; out.pinnedTag = landed.tag; }
     process.stdout.write(`${JSON.stringify(out)}\n`);
     return EXIT.OK;
   } catch (err) {

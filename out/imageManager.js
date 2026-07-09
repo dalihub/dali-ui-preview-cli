@@ -22,6 +22,12 @@ exports.isRollingTag = isRollingTag;
 exports.pickFallbackTag = pickFallbackTag;
 exports.pullWithFallback = pullWithFallback;
 exports.ensureImageWithFallback = ensureImageWithFallback;
+exports.analyzePullError = analyzePullError;
+exports.describeFailure = describeFailure;
+exports.buildDownloadFailureGuidance = buildDownloadFailureGuidance;
+exports.tagImage = tagImage;
+exports.ensureImageWithRegistryFallback = ensureImageWithRegistryFallback;
+exports.pullWithRegistryFallback = pullWithRegistryFallback;
 exports.pullImage = pullImage;
 const child_process_1 = require("child_process");
 const util_1 = require("util");
@@ -215,6 +221,149 @@ async function ensureImageWithFallback(image, tag, deps) {
         return tag;
     }
     return pullWithFallback(image, tag, deps);
+}
+/**
+ * Categorize a docker pull error string. Mirrors the VS Code extension's analyzer
+ * so both tools give identical diagnoses. Auth is checked first (GHCR token
+ * failures often wrap an httpReadSeeker frame that also trips the network matcher).
+ */
+function analyzePullError(errorMessage) {
+    const lower = errorMessage.toLowerCase();
+    if (lower.includes('failed to authorize') || lower.includes('failed to fetch anonymous token') ||
+        lower.includes('401') || lower.includes('403') || lower.includes('unauthorized') || lower.includes('denied')) {
+        return { category: 'auth' };
+    }
+    if (lower.includes('x509') || lower.includes('certificate signed by unknown authority') ||
+        lower.includes('certificate has expired') || lower.includes('certificate is not trusted') ||
+        lower.includes('tls: failed to verify')) {
+        return { category: 'cert' };
+    }
+    if (lower.includes('no such host') || lower.includes('server misbehaving') ||
+        lower.includes('name resolution') || lower.includes('could not resolve host')) {
+        return { category: 'dns' };
+    }
+    if (lower.includes('connection refused') || lower.includes('connection reset') || lower.includes('timeout') ||
+        lower.includes('i/o timeout') || lower.includes('network is unreachable') || lower.includes('no route to host') ||
+        lower.includes('tls handshake') || lower.includes('httpreadseeker') || lower.includes('eof')) {
+        return { category: 'network' };
+    }
+    if (lower.includes('not found') || lower.includes('manifest unknown') ||
+        lower.includes('manifest not found') || lower.includes('image not found')) {
+        return { category: 'notfound' };
+    }
+    return { category: 'unknown' };
+}
+/**
+ * Host-aware WHY/FIX for one registry's pull failure. The internal BART proxy must
+ * be reached DIRECTLY (bypassing the corporate web proxy); ghcr.io must be reached
+ * THROUGH it — so the fixes differ by host. Pure/exported for testing.
+ */
+function describeFailure(category, host) {
+    const isBart = host === registry_1.BART_PROXY_HOST;
+    switch (category) {
+        case 'cert':
+            return {
+                reason: `Docker daemon does not trust the TLS certificate presented for ${host}.`,
+                fix: isBart
+                    ? 'The pull is going through the corporate MITM web proxy. Reach Samsung-internal hosts DIRECTLY: add ".samsung.net" to the daemon NO_PROXY (/etc/systemd/system/docker.service.d/http-proxy.conf) and `sudo systemctl restart docker`. (Or install the corporate proxy CA into the system trust store.)'
+                    : 'If reaching ghcr.io through the corporate web proxy, install that proxy CA into the SYSTEM trust store (e.g. update-ca-certificates) and `sudo systemctl restart docker`.',
+            };
+        case 'dns':
+            return {
+                reason: `Host ${host} did not resolve (DNS).`,
+                fix: isBart
+                    ? 'The internal BART host only resolves on the Samsung corporate network/VPN. Connect to the corp network/VPN and retry.'
+                    : 'DNS for ghcr.io failed — check your network/DNS/proxy settings.',
+            };
+        case 'network':
+            return {
+                reason: `Network connection to ${host} was refused/reset/timed out.`,
+                fix: isBart
+                    ? 'Ensure you are on the corp network and the daemon routes ".samsung.net" DIRECTLY (not via the web proxy): add ".samsung.net" to the daemon NO_PROXY and restart docker.'
+                    : 'The daemon may need the corporate HTTP proxy configured (systemd drop-in) to reach the public internet — or ghcr.io is throttling; retry.',
+            };
+        case 'auth':
+            return {
+                reason: `${host} returned an authorization error (401/403).`,
+                fix: 'Usually transient — retry. If it persists, a proxy may be intercepting the registry token endpoint.',
+            };
+        case 'notfound':
+            return {
+                reason: `The requested tag does not exist on ${host}.`,
+                fix: 'Pick a different version (e.g. "latest" or "dali_2.5.28"); list them with `dali-ui-preview-cli --list-versions`.',
+            };
+        default:
+            return { reason: `Unexpected error from ${host}.`, fix: 'See the docker output above for the full error.' };
+    }
+}
+/**
+ * Compose the full "download failed" guidance across EVERY registry tried
+ * (primary + any fallback): names each server, why it failed, and how to fix it.
+ * Pure/exported for testing.
+ */
+function buildDownloadFailureGuidance(attempts) {
+    const lines = ['Could not download the DALi runtime image.', ''];
+    lines.push(attempts.length > 1 ? `Tried ${attempts.length} registries — all failed:` : 'Tried:');
+    for (const a of attempts) {
+        const { category } = analyzePullError(a.error);
+        const { reason, fix } = describeFailure(category, a.host);
+        lines.push(`  • ${a.label} (${a.host})`);
+        lines.push(`      Why: ${reason}`);
+        lines.push(`      Fix: ${fix}`);
+    }
+    lines.push('');
+    lines.push('The "local" runtime (--runtime local) needs no download and is unaffected.');
+    return lines.join('\n');
+}
+/** Create a local tag alias (`docker tag <source> <target>`). Rejects on failure. */
+async function tagImage(source, target) {
+    await execFileAsync('docker', ['tag', source, target]);
+}
+/**
+ * Wrap a per-registry pull (`inner` = {@link pullWithFallback} for `--pull`, or
+ * {@link ensureImageWithFallback} for a render) with cross-REGISTRY fallback: try the
+ * resolved registry, and if it fails ENTIRELY (e.g. the daemon can't reach or trust the
+ * BART host — a failure the same-registry TAG fallback can't fix), retry the counterpart
+ * (BART⇄GHCR via `deps.alternateImage`). On a fallback success, `deps.tagImage` aliases the
+ * fallback image to the resolved name so later renders find it. On total failure, REJECTS
+ * with a multi-line, per-registry, actionable guidance Error.
+ */
+async function withRegistryFallback(image, tag, deps, inner) {
+    const msg = (e) => (e instanceof Error ? e.message : String(e));
+    const attempts = [];
+    const primary = (0, registry_1.describeRegistry)(image);
+    try {
+        const landed = await inner(image, tag, deps);
+        return { image, tag: landed, source: primary.host };
+    }
+    catch (e1) {
+        attempts.push({ label: primary.label, host: primary.host, error: msg(e1) });
+    }
+    const alt = deps.alternateImage?.(image);
+    if (alt) {
+        const altDesc = (0, registry_1.describeRegistry)(alt);
+        deps.warn?.(`${primary.label} failed — falling back to ${altDesc.label} — ${altDesc.host}`);
+        try {
+            const landed = await inner(alt, tag, deps);
+            if (deps.tagImage) {
+                await deps.tagImage(`${alt}:${landed}`, `${image}:${landed}`);
+                deps.warn?.(`Tagged ${alt}:${landed} -> ${image}:${landed}`);
+            }
+            return { image, tag: landed, source: altDesc.host };
+        }
+        catch (e2) {
+            attempts.push({ label: altDesc.label, host: altDesc.host, error: msg(e2) });
+        }
+    }
+    throw new Error(buildDownloadFailureGuidance(attempts));
+}
+/** {@link ensureImageWithFallback} + cross-registry fallback (render path — no-op if already local). */
+function ensureImageWithRegistryFallback(image, tag, deps) {
+    return withRegistryFallback(image, tag, deps, ensureImageWithFallback);
+}
+/** {@link pullWithFallback} + cross-registry fallback (`--pull` path — always pulls, a refresh). */
+function pullWithRegistryFallback(image, tag, deps) {
+    return withRegistryFallback(image, tag, deps, pullWithFallback);
 }
 /**
  * Pull `<image>:<tag>` via `docker pull`, streaming docker's own progress to

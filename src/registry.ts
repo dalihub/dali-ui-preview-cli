@@ -59,6 +59,30 @@ export async function detectDefaultImage(timeoutMs?: number): Promise<string> {
 }
 
 /**
+ * The OTHER registry's image for the same repo path — used for cross-registry
+ * fallback: if a pull from the auto-detected host fails entirely, retry from its
+ * counterpart (BART⇄GHCR, identical repo path/digests, pure host-prefix swap).
+ *
+ * Returns `undefined` when `imageName` is neither known host (e.g. a fully custom
+ * `--runtime-image`): no known counterpart, so the caller reports the single failure.
+ */
+export function alternateImage(imageName: string): string | undefined {
+    const slash = imageName.indexOf('/');
+    if (slash === -1) {
+        return undefined;
+    }
+    const host = imageName.slice(0, slash);
+    const repoPath = imageName.slice(slash + 1);
+    if (host === BART_PROXY_HOST) {
+        return `${GHCR_HOST}/${repoPath}`;
+    }
+    if (host === GHCR_HOST) {
+        return `${BART_PROXY_HOST}/${repoPath}`;
+    }
+    return undefined;
+}
+
+/**
  * Human-friendly description of WHERE an image is pulled from, for progress output —
  * so a user watching a ~290 MB download understands which server it comes from.
  */

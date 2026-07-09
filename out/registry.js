@@ -36,6 +36,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.BART_PROXY_IMAGE = exports.GHCR_IMAGE = exports.BART_PROXY_HOST = exports.GHCR_HOST = exports.IMAGE_REPO_PATH = void 0;
 exports.isBartProxyReachable = isBartProxyReachable;
 exports.detectDefaultImage = detectDefaultImage;
+exports.alternateImage = alternateImage;
 exports.describeRegistry = describeRegistry;
 /*
  * registry.ts — where the DALi Preview runtime image is pulled from.
@@ -90,6 +91,29 @@ function isBartProxyReachable(timeoutMs = 2000) {
 /** Resolve the default runtime image: the BART proxy when reachable, else GHCR. */
 async function detectDefaultImage(timeoutMs) {
     return (await isBartProxyReachable(timeoutMs)) ? exports.BART_PROXY_IMAGE : exports.GHCR_IMAGE;
+}
+/**
+ * The OTHER registry's image for the same repo path — used for cross-registry
+ * fallback: if a pull from the auto-detected host fails entirely, retry from its
+ * counterpart (BART⇄GHCR, identical repo path/digests, pure host-prefix swap).
+ *
+ * Returns `undefined` when `imageName` is neither known host (e.g. a fully custom
+ * `--runtime-image`): no known counterpart, so the caller reports the single failure.
+ */
+function alternateImage(imageName) {
+    const slash = imageName.indexOf('/');
+    if (slash === -1) {
+        return undefined;
+    }
+    const host = imageName.slice(0, slash);
+    const repoPath = imageName.slice(slash + 1);
+    if (host === exports.BART_PROXY_HOST) {
+        return `${exports.GHCR_HOST}/${repoPath}`;
+    }
+    if (host === exports.GHCR_HOST) {
+        return `${exports.BART_PROXY_HOST}/${repoPath}`;
+    }
+    return undefined;
 }
 /**
  * Human-friendly description of WHERE an image is pulled from, for progress output —

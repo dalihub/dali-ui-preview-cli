@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.11.0] - 2026-07-09
+
+### Added
+- **Cross-registry download fallback.** The runtime-image registry is auto-detected (BART GHCR proxy on the Samsung corp network, else GHCR). This composes ON TOP of the existing same-registry *tag* fallback (rolling → newest immutable): each registry is tried with the tag fallback, and if the resolved registry fails ENTIRELY — e.g. the Docker daemon can't reach or trust the BART host, which the tag fallback can't fix — the pull now falls back to the OTHER registry (BART⇄GHCR, identical repo path/digests) and `docker tag`s the fallback image to the resolved name so later renders reuse it with no second download. Applies to both `--pull` and the render auto-pull. `--pull` JSON now includes `source` (the host that served the image).
+- **Detailed, per-registry download-failure guidance.** On total failure the CLI prints, per server tried, WHY it failed and HOW to fix it — host-aware (internal BART must be reached DIRECTLY, bypassing the corporate web proxy; ghcr.io through it), with `cert`/`dns`/`network`/`auth`/`notfound` categories. Shared logic with the VS Code extension so both tools diagnose identically.
+
 ## [0.10.5] - 2026-07-08
 
 ### Changed
