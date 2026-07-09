@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.11.1] - 2026-07-09
+
+### Added
+- **dali-ui runtime-skew detector + stale-runtime hint.** A shared, curly-quote-safe signature (`src/skewSignature.ts`, byte-identical to the extension's) flags a compile failure caused by a dali-ui API a stale runtime image no longer has — matching any missing member on a **qualified `Dali::` type** (dali-core/adaptor/ui, e.g. `Dali::Actor`/`Dali::Window`, not just `Dali::Ui::`). `errorParser` appends an actionable "refresh the runtime image" hint on such failures (previously the CLI had no skew detection at all).
+- **On-screen bounds check over the rich tree** (`src/onScreenCheck.ts`), wired into the render e2e (`tests/e2e/assert-render.js`): fails if a drawn node's exported `bounds` land at a negative/off-screen position — the click-to-code coordinate-correctness invariant. Test-path only; does not affect normal renders or exit codes.
+
 ## [0.11.0] - 2026-07-09
 
 ### Added
