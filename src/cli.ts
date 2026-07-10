@@ -150,6 +150,7 @@ const USAGE =
   '       dali-ui-preview-cli --pull [<tag>]                     (pull a runtime image tag, default latest)\n' +
   '       dali-ui-preview-cli init [<dir>]                       (set up a project so a coding agent verifies DALi UI in its loop)\n' +
   '       dali-ui-preview-cli doctor                             (print an environment-readiness report as JSON; exit 0 ready / 13 no runtime)\n' +
+  '       dali-ui-preview-cli upgrade                            (self-update the CLI to the latest release)\n' +
   '   (or --version | --help)\n' +
   '\n' +
   'Reads preview code from a file, from STDIN (a `-` positional or a piped\n' +
@@ -1410,6 +1411,20 @@ async function main(argv: string[]): Promise<number> {
     console.error(platformError);
     return EXIT.UNSUPPORTED_PLATFORM;
   }
+
+  // `upgrade` — self-update the github-installed CLI to the latest release
+  // (re-runs `npm i -g github:...`). Lazy-required; skips the notice below.
+  if (argv[0] === 'upgrade') {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    return require('./updateCheck').runUpgrade(argv.slice(1));
+  }
+
+  // Once/day, fail-silent: a one-line STDERR notice when a newer CLI release exists (stdout
+  // is the machine contract — untouched). Disable via DALI_PREVIEW_NO_UPDATE_CHECK (e.g. an agent).
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    await require('./updateCheck').maybeNotifyUpdate(readVersion());
+  } catch { /* never fail a command over an update check */ }
 
   // `init` — seed the current project (AGENTS.md + Claude skill) + pull image so a
   // coding agent can verify DALi UI in its loop. Lazy-required (only when used).

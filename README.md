@@ -104,6 +104,19 @@ node out/cli.js <input.cpp>
 npm link
 ```
 
+### Updating
+
+Because the CLI is a GitHub-clone install (not published to npm), `npm` does **not**
+auto-update it. Two ways to stay current:
+
+```bash
+dali-ui-preview-cli upgrade        # self-update to the latest release (re-runs the github install)
+```
+
+The CLI also **checks once a day** (fail-silent, `github.com` only — no API token) and prints a
+one-line **stderr** notice when a newer release exists (stdout stays the clean machine contract).
+Disable that check by setting `DALI_PREVIEW_NO_UPDATE_CHECK=1` (e.g. for an automated agent).
+
 All examples below use `dali-ui-preview-cli` (the global install); substitute
 `npx -y github:dalihub/dali-ui-preview-cli` for a one-shot, or `node out/cli.js` from a
 source checkout.

@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.12.0] - 2026-07-10
+
+### Added
+- **Self-update.** Since the CLI is a GitHub-clone install (not on npm), `npm` never auto-updates it. New:
+  - **`dali-ui-preview-cli upgrade`** — self-updates to the latest release (re-runs `npm i -g github:dalihub/dali-ui-preview-cli`).
+  - **Once-a-day update notice** — a fail-silent check (via `github.com`, no API token) prints a one-line **stderr** notice when a newer release exists. Stdout (the JSON contract) is untouched. Disable with `DALI_PREVIEW_NO_UPDATE_CHECK=1` (e.g. for an automated agent).
+
 ## [0.11.3] - 2026-07-10
 
 ### Changed
