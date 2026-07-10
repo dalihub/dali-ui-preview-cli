@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.11.2] - 2026-07-10
+
+### Fixed
+- **Clearer runtime download/connectivity status in `doctor`.** `doctor` now reports whether the Docker **DAEMON** (which actually pulls — not this CLI) can reach the selected registry: it reads the daemon's own proxy config and adds a `runtimes.docker.dockerPullWarning` when the runtime image isn't downloaded and a `ghcr.io` pull would likely time out (a proxy-less daemon can't reach ghcr.io; the internal BART mirror needs no proxy). Gives an at-a-glance download/install state + the reason a pull would fail, before it fails.
+- **Sharper pull-failure reason** (`describeFailure`, network category): names the daemon-no-proxy root cause + the exact systemd drop-in fix; notes BART needs no proxy.
+- **Version-tag fallback for the current 4-part tag scheme.** The rolling→immutable fallback regex matched only 3-part `dali_X.Y.Z[-sha]` tags, so the current 4-part `dali_X.Y.Z.BUILD[-sha]` tags silently pinned an OLDER minor. It now parses/sorts the 4-part form (build number included) and picks the newest immutable build.
+
 ## [0.11.1] - 2026-07-09
 
 ### Added

@@ -160,7 +160,10 @@ async function listVersions(image, currentTag) {
  * straight from cache with no upstream call. See {@link pickFallbackTag}.
  */
 function isRollingTag(tag) {
-    return tag === 'latest' || /^dali_\d+\.\d+\.\d+$/.test(tag);
+    // No trailing `-<sha>` ⇒ can move on the registry: `latest`, the moving minor
+    // `dali_X.Y.Z`, and the per-build pin `dali_X.Y.Z.BUILD` (re-tagged per ext-sha).
+    // Only `dali_..-<sha>` is truly immutable. (4-part X.Y.Z.BUILD supported.)
+    return tag === 'latest' || /^dali_\d+\.\d+\.\d+(\.\d+)?$/.test(tag);
 }
 /**
  * When a rolling tag can't be pulled (e.g. `latest` fails on the corp proxy but the SAME image is
@@ -170,17 +173,20 @@ function isRollingTag(tag) {
  * no immutable tag exists. Returns undefined when the list has no usable concrete tag. Pure.
  */
 function pickFallbackTag(tags, failedTag) {
+    // Supports 3-part dali_X.Y.Z AND 4-part dali_X.Y.Z.BUILD; the 4th (build) component
+    // is included so builds of the same minor sort correctly (without it the newest
+    // selection ties on [X,Y,Z] and can pin an older build).
     const ver = (t) => {
-        const m = /^dali_(\d+)\.(\d+)\.(\d+)/.exec(t);
-        return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : undefined;
+        const m = /^dali_(\d+)\.(\d+)\.(\d+)(?:\.(\d+))?/.exec(t);
+        return m ? [Number(m[1]), Number(m[2]), Number(m[3]), m[4] ? Number(m[4]) : 0] : undefined;
     };
     const newest = (arr) => arr.length === 0 ? undefined : [...arr].sort((a, b) => {
         const [av, bv] = [ver(a), ver(b)];
-        return bv[0] - av[0] || bv[1] - av[1] || bv[2] - av[2];
+        return bv[0] - av[0] || bv[1] - av[1] || bv[2] - av[2] || bv[3] - av[3];
     })[0];
     const usable = tags.filter((t) => t !== failedTag && ver(t));
-    const immutable = usable.filter((t) => /^dali_\d+\.\d+\.\d+-[0-9a-f]{7,}$/.test(t));
-    const moving = usable.filter((t) => /^dali_\d+\.\d+\.\d+$/.test(t)); // dali_X.Y.Z (also mutable)
+    const immutable = usable.filter((t) => /^dali_\d+\.\d+\.\d+(\.\d+)?-[0-9a-f]{7,}$/.test(t));
+    const moving = usable.filter((t) => /^dali_\d+\.\d+\.\d+(\.\d+)?$/.test(t)); // moving minor / per-build pin
     return newest(immutable) ?? newest(moving);
 }
 /**
@@ -277,10 +283,12 @@ function describeFailure(category, host) {
             };
         case 'network':
             return {
-                reason: `Network connection to ${host} was refused/reset/timed out.`,
+                reason: isBart
+                    ? `Network connection to ${host} (internal BART mirror) was refused/reset/timed out.`
+                    : `Network connection to ${host} timed out — the Docker daemon could not reach ghcr.io directly.`,
                 fix: isBart
                     ? 'Ensure you are on the corp network and the daemon routes ".samsung.net" DIRECTLY (not via the web proxy): add ".samsung.net" to the daemon NO_PROXY and restart docker.'
-                    : 'The daemon may need the corporate HTTP proxy configured (systemd drop-in) to reach the public internet — or ghcr.io is throttling; retry.',
+                    : 'The image is pulled by the Docker DAEMON (not this CLI), and the daemon most likely has NO corporate proxy configured — so direct egress to ghcr.io is throttled/blocked (intermittent i/o timeout). Fix: give the daemon the proxy via a systemd drop-in "/etc/systemd/system/docker.service.d/http-proxy.conf" (HTTP_PROXY/HTTPS_PROXY=<corp proxy>, NO_PROXY=".samsung.net,localhost,127.0.0.1"), then `sudo systemctl daemon-reload && sudo systemctl restart docker`. On the corp network the internal BART mirror is the reliable source and needs no proxy.',
             };
         case 'auth':
             return {

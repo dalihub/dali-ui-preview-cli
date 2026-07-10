@@ -25,6 +25,25 @@ import { localTags } from './imageManager';
 import { checkLocalReadiness, LocalReadiness } from './runtime/localRunner';
 import { readConfig } from './runtime/config';
 import { RuntimeMode } from './render';
+import { describeRegistry, GHCR_HOST } from './registry';
+import { execFile } from 'child_process';
+import { promisify } from 'util';
+
+const execFileAsync = promisify(execFile);
+
+/** True iff the Docker DAEMON has an HTTP(S) proxy configured (what actually pulls —
+ *  distinct from this CLI's own env). Empty `docker info` proxy fields ⇒ no daemon proxy,
+ *  which means direct egress to external registries (ghcr.io) is likely throttled/blocked. */
+async function daemonProxyConfigured(): Promise<boolean> {
+  try {
+    const { stdout } = await execFileAsync(
+      'docker', ['info', '--format', '{{.HTTPProxy}}{{.HTTPSProxy}}'], { timeout: 10_000 },
+    );
+    return stdout.trim().length > 0;
+  } catch {
+    return false;
+  }
+}
 
 /** Exit code when no runtime is usable — shared meaning with the render path's
  *  RUNTIME_UNAVAILABLE (13): "you have no runtime you can use." */
@@ -46,6 +65,10 @@ export interface DockerStatus {
   image: string;
   /** Blocking issues, actionable + human-relayable; empty when available. */
   issues: string[];
+  /** Non-blocking pre-pull warning: the selected registry is unlikely to be reachable
+   *  by the Docker DAEMON (e.g. ghcr.io while the daemon has no corporate proxy), so a
+   *  first-render ~290 MB pull would probably time out. Absent when no such risk. */
+  dockerPullWarning?: string;
 }
 
 export interface LocalStatus {
@@ -84,6 +107,11 @@ export interface DoctorInputs {
   local: LocalReadiness;
   /** Persisted runtime choice from `.dali/config.json`, or null. */
   configured: RuntimeMode | null;
+  /** Host of the selected registry (ghcr.io or the BART proxy) — for pull-risk detection.
+   *  Optional so existing callers/tests are unaffected. */
+  registryHost?: string;
+  /** Whether the Docker DAEMON has an HTTP proxy configured (from `docker info`). */
+  daemonHasProxy?: boolean;
 }
 
 /**
@@ -106,6 +134,14 @@ export function buildDoctorReport(inputs: DoctorInputs): DoctorReport {
     image: `${inputs.image}:${inputs.tag}`,
     issues: inputs.dockerOk ? [] : [DOCKER_UNAVAILABLE_ISSUE],
   };
+  // Pre-pull risk (non-blocking): a proxy-less daemon cannot reliably reach ghcr.io, so
+  // the first render's pull would likely time out. Surface it in the status BEFORE that
+  // happens. The internal BART mirror needs no proxy, so no warning there.
+  if (docker.available && !docker.imagePulled
+      && inputs.registryHost === GHCR_HOST && inputs.daemonHasProxy === false) {
+    docker.dockerPullWarning =
+      'Runtime image not downloaded and the selected registry is ghcr.io, but the Docker daemon has NO proxy configured — a pull will likely time out (the daemon, not this CLI, does the pull). Fix: connect to the Samsung corp network (the extension/CLI then use the internal BART mirror, which needs no proxy), OR configure the daemon proxy (systemd drop-in http-proxy.conf with NO_PROXY=".samsung.net,localhost,127.0.0.1") and restart docker.';
+  }
   const local: LocalStatus = {
     available: inputs.local.ready,
     prefix: inputs.local.prefix,
@@ -234,6 +270,11 @@ export async function runDoctor(argv: string[]): Promise<number> {
       dockerImagePulled = false;
     }
   }
+  // Daemon-reality probe for pull-risk: which registry is selected + does the DAEMON
+  // (not this CLI) have a proxy? A proxy-less daemon can't reliably reach ghcr.io.
+  const registryHost = describeRegistry(args.image).host;
+  const daemonHasProxy = dockerOk ? await daemonProxyConfigured() : undefined;
+
   const local = checkLocalReadiness({ daliPrefix: args.daliPrefix, baseDir });
   const configured = readConfig(baseDir).runtime ?? null;
 
@@ -244,6 +285,8 @@ export async function runDoctor(argv: string[]): Promise<number> {
     tag: args.imageTag,
     local,
     configured,
+    registryHost,
+    daemonHasProxy,
   });
 
   process.stdout.write(`${JSON.stringify(report)}\n`);

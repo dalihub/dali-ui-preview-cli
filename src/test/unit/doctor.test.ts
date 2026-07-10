@@ -108,3 +108,34 @@ describe('doctor buildDoctorReport', () => {
     expect(r.recommended).to.equal('local');
   });
 });
+
+describe('doctor buildDoctorReport — dockerPullWarning (daemon-proxy pre-pull risk)', () => {
+  const GHCR = 'ghcr.io';
+  const BART = 'ghcr-docker-remote.bart.sec.samsung.net';
+
+  it('warns when GHCR is selected, not pulled, and the daemon has NO proxy', () => {
+    const r = buildDoctorReport(inputs({ dockerOk: true, dockerImagePulled: false, registryHost: GHCR, daemonHasProxy: false }));
+    expect(r.runtimes.docker.dockerPullWarning, 'expected a pull warning').to.be.a('string');
+    expect(r.runtimes.docker.dockerPullWarning!).to.contain('proxy');
+  });
+
+  it('no warning when the daemon HAS a proxy (ghcr.io reachable via proxy)', () => {
+    const r = buildDoctorReport(inputs({ dockerOk: true, dockerImagePulled: false, registryHost: GHCR, daemonHasProxy: true }));
+    expect(r.runtimes.docker.dockerPullWarning).to.equal(undefined);
+  });
+
+  it('no warning for the internal BART mirror (needs no proxy)', () => {
+    const r = buildDoctorReport(inputs({ dockerOk: true, dockerImagePulled: false, registryHost: BART, daemonHasProxy: false }));
+    expect(r.runtimes.docker.dockerPullWarning).to.equal(undefined);
+  });
+
+  it('no warning once the image is already pulled', () => {
+    const r = buildDoctorReport(inputs({ dockerOk: true, dockerImagePulled: true, registryHost: GHCR, daemonHasProxy: false }));
+    expect(r.runtimes.docker.dockerPullWarning).to.equal(undefined);
+  });
+
+  it('no warning when the daemon is down (nothing to pull with)', () => {
+    const r = buildDoctorReport(inputs({ dockerOk: false, registryHost: GHCR, daemonHasProxy: false }));
+    expect(r.runtimes.docker.dockerPullWarning).to.equal(undefined);
+  });
+});

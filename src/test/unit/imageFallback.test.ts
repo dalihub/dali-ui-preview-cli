@@ -77,6 +77,25 @@ describe('pickFallbackTag (corp-proxy "latest unavailable" fallback)', () => {
         expect(pickFallbackTag(['latest'], 'latest')).to.equal(undefined);
         expect(pickFallbackTag([], 'latest')).to.equal(undefined);
     });
+
+    // Regression: the runtime moved to a 4-part dali_X.Y.Z.BUILD[-sha] tag. The old
+    // 3-part-only regex matched neither the 4-part immutable nor the pin, silently
+    // pinning an OLD 3-part dali_2.5.28 build. Guard 4-part support + build-number sort.
+    it('handles 4-part dali_X.Y.Z.BUILD tags and picks the newest immutable', () => {
+        const tags = [
+            'latest', 'dali_2.5.28', 'dali_2.5.28.10837', 'dali_2.5.28.10837-c9bd5b1', 'dali_2.5.28-a3ede24',
+            'dali_2.5.29', 'dali_2.5.29.10863', 'dali_2.5.29.10863-c9bd5b1',
+        ];
+        expect(pickFallbackTag(tags, 'latest')).to.equal('dali_2.5.29.10863-c9bd5b1');
+    });
+    it('sorts 4-part tags by BUILD number', () => {
+        expect(pickFallbackTag(['dali_2.5.29.10708-aaaaaaa', 'dali_2.5.29.10863-bbbbbbb'], 'latest'))
+            .to.equal('dali_2.5.29.10863-bbbbbbb');
+    });
+    it('classifies 4-part pin as rolling and 4-part -sha as immutable', () => {
+        expect(isRollingTag('dali_2.5.29.10863')).to.equal(true);
+        expect(isRollingTag('dali_2.5.29.10863-c9bd5b1')).to.equal(false);
+    });
 });
 
 describe('pullWithFallback', () => {

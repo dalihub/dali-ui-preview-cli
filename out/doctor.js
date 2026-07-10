@@ -25,6 +25,22 @@ const dockerRunner_1 = require("./dockerRunner");
 const imageManager_1 = require("./imageManager");
 const localRunner_1 = require("./runtime/localRunner");
 const config_1 = require("./runtime/config");
+const registry_1 = require("./registry");
+const child_process_1 = require("child_process");
+const util_1 = require("util");
+const execFileAsync = (0, util_1.promisify)(child_process_1.execFile);
+/** True iff the Docker DAEMON has an HTTP(S) proxy configured (what actually pulls —
+ *  distinct from this CLI's own env). Empty `docker info` proxy fields ⇒ no daemon proxy,
+ *  which means direct egress to external registries (ghcr.io) is likely throttled/blocked. */
+async function daemonProxyConfigured() {
+    try {
+        const { stdout } = await execFileAsync('docker', ['info', '--format', '{{.HTTPProxy}}{{.HTTPSProxy}}'], { timeout: 10000 });
+        return stdout.trim().length > 0;
+    }
+    catch {
+        return false;
+    }
+}
 /** Exit code when no runtime is usable — shared meaning with the render path's
  *  RUNTIME_UNAVAILABLE (13): "you have no runtime you can use." */
 const EXIT_NOT_READY = 13;
@@ -51,6 +67,14 @@ function buildDoctorReport(inputs) {
         image: `${inputs.image}:${inputs.tag}`,
         issues: inputs.dockerOk ? [] : [DOCKER_UNAVAILABLE_ISSUE],
     };
+    // Pre-pull risk (non-blocking): a proxy-less daemon cannot reliably reach ghcr.io, so
+    // the first render's pull would likely time out. Surface it in the status BEFORE that
+    // happens. The internal BART mirror needs no proxy, so no warning there.
+    if (docker.available && !docker.imagePulled
+        && inputs.registryHost === registry_1.GHCR_HOST && inputs.daemonHasProxy === false) {
+        docker.dockerPullWarning =
+            'Runtime image not downloaded and the selected registry is ghcr.io, but the Docker daemon has NO proxy configured — a pull will likely time out (the daemon, not this CLI, does the pull). Fix: connect to the Samsung corp network (the extension/CLI then use the internal BART mirror, which needs no proxy), OR configure the daemon proxy (systemd drop-in http-proxy.conf with NO_PROXY=".samsung.net,localhost,127.0.0.1") and restart docker.';
+    }
     const local = {
         available: inputs.local.ready,
         prefix: inputs.local.prefix,
@@ -171,6 +195,10 @@ async function runDoctor(argv) {
             dockerImagePulled = false;
         }
     }
+    // Daemon-reality probe for pull-risk: which registry is selected + does the DAEMON
+    // (not this CLI) have a proxy? A proxy-less daemon can't reliably reach ghcr.io.
+    const registryHost = (0, registry_1.describeRegistry)(args.image).host;
+    const daemonHasProxy = dockerOk ? await daemonProxyConfigured() : undefined;
     const local = (0, localRunner_1.checkLocalReadiness)({ daliPrefix: args.daliPrefix, baseDir });
     const configured = (0, config_1.readConfig)(baseDir).runtime ?? null;
     const report = buildDoctorReport({
@@ -180,6 +208,8 @@ async function runDoctor(argv) {
         tag: args.imageTag,
         local,
         configured,
+        registryHost,
+        daemonHasProxy,
     });
     process.stdout.write(`${JSON.stringify(report)}\n`);
     return report.ready ? 0 : EXIT_NOT_READY;
