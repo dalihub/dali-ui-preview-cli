@@ -26,6 +26,8 @@ Write a snippet of DALi (Tizen's Dynamic Animation Library) UI C++, and this CLI
 
 LLM coding agents can write UI code, but they can't *see* whether it looks right. `dali-ui-preview-cli` closes that loop: an agent runs **write → render → compare → rewrite**, reading the structured tree first (cheap, exact, diffable) and the image second (for vision). No DALi SDK build is required on your machine — just Docker. The same loop is just as useful for a human eyeballing a layout in a terminal.
 
+> **Where this fits (and honest limits):** the CLI is a *fast first-pass verification surface* — an agent invokes it directly (JSON on stdout, **no MCP server needed**), and it's most valuable exactly where DALi lives (Tizen TV / embedded, where a real device run is slow and hardware is scarce). It is **not** a replacement for on-device validation: the render is a headless software raster of the extracted region, so "preview green" ≠ "correct on device." Full rationale: [`docs/value-and-positioning.md`](docs/value-and-positioning.md).
+
 ## Prerequisites
 
 - **Linux (x86-64) only.** The CLI shells out to a Linux Docker runtime image (or a native
