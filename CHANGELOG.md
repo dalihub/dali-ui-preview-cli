@@ -1,5 +1,13 @@
 # Changelog
 
+## [Unreleased]
+
+### Changed
+- **Removed WSL/Windows references — not a supported platform.** The README (EN/KO) no longer suggests
+  running under WSL2; the unsupported-platform message and its doc comments now point Windows/macOS
+  users to a Linux VM or a remote Linux host (exit `14` behavior unchanged). Adds an internal
+  Windows/WSL2 feasibility assessment (`docs/wsl-windows-compatibility.md`) marked NOT supported.
+
 ## [0.12.0] - 2026-07-10
 
 ### Added
