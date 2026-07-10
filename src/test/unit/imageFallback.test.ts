@@ -226,6 +226,15 @@ describe('pullWithRegistryFallback (cross-registry BART⇄GHCR fallback)', () =>
         expect(d.tagged).to.deep.equal([[`${GHCR_IMAGE}:${IMMUTABLE}`, `${BART_PROXY_IMAGE}:${IMMUTABLE}`]]);
     });
 
+    it('tries the BART mirror FIRST when resolved image is ghcr.io (no wasted ghcr.io attempt)', async () => {
+        const d = regDeps([]); // nothing fails — BART must be tried first and win
+        const res = await pullWithRegistryFallback(GHCR_IMAGE, IMMUTABLE, d);
+        expect(res.image).to.equal(GHCR_IMAGE);              // resolved name unchanged
+        expect(res.source).to.equal(BART_PROXY_HOST);        // bytes came from BART (tried first)
+        expect(d.pulled).to.deep.equal([`${BART_PROXY_IMAGE}:${IMMUTABLE}`]); // ghcr.io never pulled
+        expect(d.tagged).to.deep.equal([[`${BART_PROXY_IMAGE}:${IMMUTABLE}`, `${GHCR_IMAGE}:${IMMUTABLE}`]]);
+    });
+
     it('rejects with multi-registry guidance when BOTH registries fail', async () => {
         const d = regDeps([BART_PROXY_HOST, GHCR_HOST]);
         let msg = '';

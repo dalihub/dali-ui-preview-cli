@@ -388,14 +388,24 @@ export interface RegistryFallbackResult {
     source: string;
 }
 
+/** Rounds of the whole BART→GHCR cycle for TRANSIENT failures (a round of only hard
+ *  config errors stops early). One attempt per host per round — no slow same-host retry. */
+const MAX_REGISTRY_ROUNDS = 3;
+
 /**
  * Wrap a per-registry pull (`inner` = {@link pullWithFallback} for `--pull`, or
- * {@link ensureImageWithFallback} for a render) with cross-REGISTRY fallback: try the
- * resolved registry, and if it fails ENTIRELY (e.g. the daemon can't reach or trust the
- * BART host — a failure the same-registry TAG fallback can't fix), retry the counterpart
- * (BART⇄GHCR via `deps.alternateImage`). On a fallback success, `deps.tagImage` aliases the
- * fallback image to the resolved name so later renders find it. On total failure, REJECTS
- * with a multi-line, per-registry, actionable guidance Error.
+ * {@link ensureImageWithFallback} for a render) with cross-REGISTRY fallback.
+ *
+ * Redesigned per the corp-network reality (see the runtime-download diagnosis):
+ *   • **BART first.** The internal BART mirror is the reliable path (no proxy needed); ghcr.io
+ *     needs the daemon to have a corporate proxy it often lacks — and the reachability the caller
+ *     resolved from can be stale/misprobed. So try the BART variant BEFORE ghcr.io regardless of
+ *     which registry `image` resolved to. External users with no BART just fail it fast.
+ *   • **One attempt per host, then immediately fall back** to the counterpart (BART⇄GHCR via
+ *     `deps.alternateImage`); the whole cycle repeats up to {@link MAX_REGISTRY_ROUNDS} for
+ *     transient failures. A round with only hard errors (cert/dns/notfound) stops early.
+ * On a cross-registry success, `deps.tagImage` aliases the pulled image to the resolved name so
+ * later renders find it. On total failure, REJECTS with per-registry, actionable guidance.
  */
 async function withRegistryFallback(
     image: string,
@@ -406,27 +416,38 @@ async function withRegistryFallback(
     const msg = (e: unknown): string => (e instanceof Error ? e.message : String(e));
     const attempts: { label: string; host: string; error: string }[] = [];
 
-    const primary = describeRegistry(image);
-    try {
-        const landed = await inner(image, tag, deps);
-        return { image, tag: landed, source: primary.host };
-    } catch (e1) {
-        attempts.push({ label: primary.label, host: primary.host, error: msg(e1) });
-    }
-
+    // BART-first host order.
     const alt = deps.alternateImage?.(image);
-    if (alt) {
-        const altDesc = describeRegistry(alt);
-        deps.warn?.(`${primary.label} failed — falling back to ${altDesc.label} — ${altDesc.host}`);
-        try {
-            const landed = await inner(alt, tag, deps);
-            if (deps.tagImage) {
-                await deps.tagImage(`${alt}:${landed}`, `${image}:${landed}`);
-                deps.warn?.(`Tagged ${alt}:${landed} -> ${image}:${landed}`);
+    const hosts: string[] = !alt
+        ? [image]
+        : describeRegistry(image).host === BART_PROXY_HOST
+            ? [image, alt]
+            : [alt, image]; // resolved to ghcr.io → try the BART mirror (alt) first
+
+    const succeed = async (host: string, landed: string): Promise<RegistryFallbackResult> => {
+        if (host !== image && deps.tagImage) {
+            await deps.tagImage(`${host}:${landed}`, `${image}:${landed}`);
+            deps.warn?.(`Tagged ${host}:${landed} -> ${image}:${landed}`);
+        }
+        return { image, tag: landed, source: describeRegistry(host).host };
+    };
+
+    for (let round = 1; round <= MAX_REGISTRY_ROUNDS; round++) {
+        let anyRetryable = false;
+        for (const host of hosts) {
+            const desc = describeRegistry(host);
+            try {
+                const landed = await inner(host, tag, deps);
+                return await succeed(host, landed);
+            } catch (e) {
+                const m = msg(e);
+                attempts.push({ label: desc.label, host: desc.host, error: m });
+                if (analyzePullError(m).category === 'network') { anyRetryable = true; }
             }
-            return { image, tag: landed, source: altDesc.host };
-        } catch (e2) {
-            attempts.push({ label: altDesc.label, host: altDesc.host, error: msg(e2) });
+        }
+        if (!anyRetryable) { break; } // only hard/config errors this round — repeating can't help
+        if (round < MAX_REGISTRY_ROUNDS) {
+            await new Promise((r) => setTimeout(r, round * 1000));
         }
     }
 

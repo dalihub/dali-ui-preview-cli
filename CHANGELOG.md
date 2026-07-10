@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.11.3] - 2026-07-10
+
+### Changed
+- **Runtime download tries the internal BART mirror FIRST, and rotates registries fast** (mirrors extension v0.60.0). The cross-registry fallback (`withRegistryFallback`) now tries the BART variant before ghcr.io regardless of which registry the caller resolved (external users with no BART fail it fast), does **one attempt per host then immediately falls back** to the counterpart, and repeats the whole BART→GHCR cycle up to 3 rounds for *transient* failures (a round of only hard cert/dns errors stops early). This avoids wasting attempts on ghcr.io — which a proxy-less Docker daemon can't reliably reach — when the reliable internal mirror is available.
+
 ## [0.11.2] - 2026-07-10
 
 ### Fixed
