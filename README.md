@@ -30,9 +30,8 @@ LLM coding agents can write UI code, but they can't *see* whether it looks right
 
 - **Linux (x86-64) only.** The CLI shells out to a Linux Docker runtime image (or a native
   DALi build + `g++`/`Xvfb`), so it does not run on macOS or Windows natively — invoking it
-  there stops immediately with exit `14` and a hint. **On Windows, run it inside WSL2
-  (Ubuntu)** with Docker available (WSL2 reports as `linux`, so everything below applies); on
-  macOS use a Linux VM or a remote Linux host. (Verify any host by running `doctor` there.)
+  there stops immediately with exit `14` and a hint. On macOS or Windows, use a Linux VM or a
+  remote Linux host. (Verify any host by running `doctor` there.)
 - **Node.js 18 LTS recommended** to run the CLI itself. (18 is the declared `engines` floor —
   a supported-LTS policy, not a hard technical requirement; the code targets ES2020 and uses
   no Node-18-only APIs, so older 14+ runtimes will likely work but are unsupported.) You also
@@ -498,7 +497,7 @@ Note: DALi inserts internal `CameraActor` siblings (zero-area boxes); `--at`/`--
 | `11` | Render / capture error. |
 | `12` | Docker unavailable (the `docker info` preflight failed). |
 | `13` | No usable runtime — from a render: `--runtime local` was selected but a DALi prefix / `g++` / `Xvfb` / `pkg-config` is missing; from `doctor`: neither runtime is ready. |
-| `14` | Unsupported host OS (not Linux) — run under WSL2 (Windows) or a Linux host. `--version`/`--help` still work anywhere. |
+| `14` | Unsupported host OS (not Linux) — run on a Linux host (a VM or remote host on macOS/Windows). `--version`/`--help` still work anywhere. |
 | `20` | Verify diff mismatch (rendered, but diverged from the baseline). |
 
 `doctor` exits `0` when a runtime is ready and `13` when none is (its JSON report prints on stdout either way).

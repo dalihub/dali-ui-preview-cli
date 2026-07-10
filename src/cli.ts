@@ -84,14 +84,14 @@ const EXIT = {
 /**
  * The CLI runs on **Linux only** — it shells out to a Linux Docker runtime image (or a
  * native DALi build) and, in local mode, to `g++`/`Xvfb`. Returns a human-readable error
- * message for platforms that can't work, or `null` for Linux (incl. WSL2, which reports
- * `linux`). Pure so it is unit-tested without touching `process`. `--version`/`--help` are
- * exempt (they run anywhere) so a curious mac/Windows user can still inspect the tool.
+ * message for platforms that can't work, or `null` for Linux. Pure so it is unit-tested
+ * without touching `process`. `--version`/`--help` are exempt (they run anywhere) so a
+ * curious mac/Windows user can still inspect the tool.
  */
 export function unsupportedPlatformMessage(platform: string): string | null {
   if (platform === 'linux') { return null; }
   const hint = platform === 'win32'
-    ? 'On Windows, run it inside WSL2 (Ubuntu) with Docker available.'
+    ? 'On Windows, run it in a Linux VM or on a remote Linux host.'
     : 'On macOS, run it in a Linux VM or on a remote Linux host.';
   return (
     `dali-ui-preview-cli runs on Linux (x86-64) only — detected platform "${platform}".\n` +
@@ -1405,7 +1405,7 @@ async function main(argv: string[]): Promise<number> {
 
   // Hard-stop on a non-Linux host (mac/Windows-native): every render path needs a Linux
   // Docker runtime or native g++/Xvfb, so fail fast with actionable guidance instead of a
-  // confusing downstream docker/xvfb error. WSL2 reports `linux`, so it passes through.
+  // confusing downstream docker/xvfb error.
   const platformError = unsupportedPlatformMessage(process.platform);
   if (platformError) {
     console.error(platformError);
