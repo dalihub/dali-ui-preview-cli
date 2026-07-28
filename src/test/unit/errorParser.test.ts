@@ -77,11 +77,19 @@ describe('errorParser', () => {
         it('detects a runtime-API skew', () => {
             expect(detectRuntimeApiSkew(skew)).to.equal(true);
         });
-        it('appends the stale-runtime hint in formatRawError', () => {
-            expect(formatRawError(skew)).to.contain('stale DALi runtime');
+        it('appends the runtime-skew hint in formatRawError', () => {
+            expect(formatRawError(skew)).to.contain('DALi runtime/API skew');
+        });
+        it('names BOTH skew directions, since the signature cannot tell them apart', () => {
+            // A stale image (missing an API the code uses) and a newer image (having
+            // REMOVED an API the code calls, as dali-ui 2.5.30 did to AddChildren) emit
+            // the identical g++ signature, so the hint must not assert one fix.
+            const hinted = formatRawError(skew);
+            expect(hinted).to.contain('stale');
+            expect(hinted).to.contain('REMOVED');
         });
         it('does not append the hint to an ordinary error', () => {
-            expect(formatRawError('/tmp/x/preview_harness.cpp:5:3: error: expected ; before }')).to.not.contain('stale DALi runtime');
+            expect(formatRawError('/tmp/x/preview_harness.cpp:5:3: error: expected ; before }')).to.not.contain('DALi runtime/API skew');
         });
     });
 });

@@ -45,7 +45,7 @@ import { resolveProjectIncludes, findProjectRoot } from './sliceSources';
 import { detectDefaultImage, describeRegistry, alternateImage } from './registry';
 import { dockerDaliVersion, localDaliVersion } from './runtimeVersion';
 import { buildTree, MinimalNode } from './treeModel';
-import { parseGccErrors, formatRawError } from './errorParser';
+import { parseGccErrors, formatRawError, detectRuntimeApiSkew, RUNTIME_API_SKEW_HINT } from './errorParser';
 import { nodeAt, nodeById, toRegion } from './treeQuery';
 import { renderOverlay } from './overlayRenderer';
 import { formatTree } from './formatters/treeFormatter';
@@ -121,6 +121,17 @@ export interface StructuredError {
   phase: RenderError['phase'];
   message: string;
   sourceLine: number | null;
+  /**
+   * Set only when the g++ stderr carries the dali-ui runtime-API-skew signature
+   * ({@link RUNTIME_API_SKEW_HINT}). ADDITIVE and optional: `message` keeps its exact
+   * pre-existing value (the raw compiler text) so existing parsers are unaffected,
+   * and the hint travels beside it instead of being glued on.
+   *
+   * Before this field the hint was reachable only through `formatRawError`, i.e. only
+   * on the fallback path taken when NO g++ line maps. A real skew error always maps to
+   * a source line, so it took the structured branch and the hint never once surfaced.
+   */
+  hint?: string;
 }
 
 const USAGE =
@@ -142,7 +153,7 @@ const USAGE =
   '       dali-ui-preview-cli <input.cpp> --theme dark|light     (background theme, default dark)\n' +
   '       dali-ui-preview-cli <input.cpp> --dpr N                (device-pixel ratio, default 1)\n' +
   '       dali-ui-preview-cli <input.cpp> --image-tag <tag>      (runtime image tag for THIS render, default latest)\n' +
-  '       dali-ui-preview-cli <input.cpp> --image <name>         (override the runtime image name; advanced)\n' +
+  '       dali-ui-preview-cli <input.cpp> --runtime-image <name> (override the runtime image name; advanced)\n' +
   '       dali-ui-preview-cli <input.cpp> --runtime docker|local (render backend; default docker)\n' +
   '       dali-ui-preview-cli <input.cpp> --local                (shorthand for --runtime local)\n' +
   '       dali-ui-preview-cli <input.cpp> --dali-prefix <path>   (native DALi install for --runtime local)\n' +
@@ -180,8 +191,9 @@ const USAGE =
   'Runtime versions track DALi releases (e.g. dali_2.5.18), plus the rolling `latest`.\n' +
   '--list-versions prints the available runtime image versions (remote ∪ local, each\n' +
   'marked local/current) as JSON; --pull [<tag>] downloads a tag (default latest);\n' +
-  '--image-tag <tag> selects the tag for THIS render (default latest); --image <name>\n' +
-  'overrides the runtime image name. --list-versions / --pull do NOT render.\n' +
+  '--image-tag <tag> selects the tag for THIS render (default latest); --runtime-image\n' +
+  '<name> overrides the runtime image name (--image is the output PNG, not the image\n' +
+  'name). --list-versions / --pull do NOT render.\n' +
   '\n' +
   'Exit codes: 0 ok; 1 usage error or empty input; 10 compile error (in your code);\n' +
   '11 render/capture error; 12 docker unavailable; 20 verify diff mismatch.\n' +
@@ -875,6 +887,48 @@ interface RuntimeContext {
 }
 
 /**
+ * The exact message {@link handleRenderFailure} pattern-matches to return
+ * {@link EXIT.DOCKER_UNAVAILABLE} (12); `dockerRunner`'s own preflight throws the
+ * same text, so both entry points stay one documented failure class.
+ */
+export const DOCKER_UNAVAILABLE_MESSAGE =
+  'Docker is not available: `docker info` failed. Ensure Docker is ' +
+  'installed, the daemon is running, and the current user can access the Docker socket.';
+
+/** Injectable seam for {@link ensureImageForRender} (so it is unit-tested without docker). */
+export interface EnsureForRenderDeps {
+  /** Resolve/pull the image, returning the tag that actually landed. */
+  ensure: (image: string, tag: string) => Promise<{ tag: string }>;
+  /** `docker info` probe, consulted ONLY after `ensure` has already failed. */
+  dockerAvailable: () => Promise<boolean>;
+}
+
+/**
+ * Ensure the runtime image for a docker render, re-classifying a "no Docker at all"
+ * host correctly.
+ *
+ * The image ensure/pull runs BEFORE `renderInContainerAt`'s `docker info` preflight,
+ * so on a host with no Docker every `docker pull` simply failed and the user got the
+ * generic multi-registry "could not download the image" text plus exit 1 — never the
+ * documented exit 12, and never the actual reason ("you have no Docker"). Probing
+ * only after a failure keeps the happy path free of an extra `docker info`.
+ */
+export async function ensureImageForRender(
+  image: string,
+  tag: string,
+  deps: EnsureForRenderDeps,
+): Promise<string> {
+  try {
+    return (await deps.ensure(image, tag)).tag;
+  } catch (err) {
+    if (!(await deps.dockerAvailable())) {
+      throw new Error(DOCKER_UNAVAILABLE_MESSAGE);
+    }
+    throw err; // Docker is fine — a genuine registry/network failure; keep its guidance.
+  }
+}
+
+/**
  * Resolve the runtime context for a render: the mode (flag → env → config →
  * docker), the docker image coordinates, the optional native DALi prefix, and the
  * base directory used to locate `.dali/config.json` and a native prefix (the input
@@ -893,7 +947,10 @@ async function resolveRuntimeContext(parsed: RenderArgs, resolved: ResolvedInput
   // failing the render. Agents call render directly (no prior `--pull`), so this can't rely on one.
   // No-op when the image is already local. Local mode doesn't use the image.
   const tag = mode === 'docker'
-    ? (await ensureImageWithRegistryFallback(ref.image, ref.tag, makeEnsureDeps(baseDir))).tag
+    ? await ensureImageForRender(ref.image, ref.tag, {
+      ensure: (image, wanted) => ensureImageWithRegistryFallback(image, wanted, makeEnsureDeps(baseDir)),
+      dockerAvailable: isDockerAvailable,
+    })
     : ref.tag;
   return {
     mode,
@@ -1235,18 +1292,26 @@ async function runPull(parsed: RenderArgs): Promise<number> {
 export function mapRenderError(err: RenderError, resolved: ResolvedInput): StructuredError {
   const offset = userCodeOffset();
   const parsed = parseGccErrors(err.stderr, offset);
+  // A runtime-API-skew failure ALWAYS maps to a user line, so it takes the structured
+  // branch below — which is exactly why the hint has to be attached here and not left
+  // to formatRawError's fallback path (where it could never fire for this case).
+  const hint = detectRuntimeApiSkew(err.stderr) ? RUNTIME_API_SKEW_HINT.trim() : undefined;
   if (parsed.length > 0) {
     const first = parsed[0];
     return {
       phase: err.phase,
       message: first.message,
       sourceLine: first.line + (resolved.startLine ?? 0) + 1,
+      ...(hint ? { hint } : {}),
     };
   }
   return {
     phase: err.phase,
+    // formatRawError already appends the hint inline on this path; keep `hint` set too
+    // so a machine reader sees the same signal regardless of which branch was taken.
     message: formatRawError(err.stderr),
     sourceLine: null,
+    ...(hint ? { hint } : {}),
   };
 }
 

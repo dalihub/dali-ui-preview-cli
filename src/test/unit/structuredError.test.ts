@@ -119,4 +119,41 @@ describe('M5 structured errors (F5.3)', () => {
             expect(structured.sourceLine).to.equal(null);
         });
     });
+
+    // Regression: the skew hint used to live ONLY inside formatRawError, i.e. only on
+    // the branch taken when no g++ line maps. A real skew error always maps to a line,
+    // so it took the structured branch and the hint never once reached a user. These
+    // pin the hint to the LINE-MAPPED path, which is the one that actually happens.
+    describe('runtime-API-skew hint on the structured path', () => {
+        /** A real dali-ui 2.5.30 failure: View::AddChildren was removed. */
+        function skewStderr(): string {
+            const gccLine = userCodeOffset() + 3;
+            return `/work/preview_harness.cpp:${gccLine}:6: error: ‘class Dali::Ui::FlexLayout’ has no member named ‘AddChildren’`;
+        }
+
+        it('sets `hint` when the error line maps to user code', () => {
+            const err = new RenderError('Container render failed', skewStderr(), 2, 'compile');
+            const structured = mapRenderError(err, resolved('root.AddChildren({ a });', 0));
+
+            expect(structured.sourceLine).to.equal(4); // proves the LINE-MAPPED branch ran
+            expect(structured.hint).to.be.a('string');
+            expect(structured.hint).to.contain('DALi runtime/API skew');
+        });
+
+        it('leaves `message` byte-identical to the compiler text (hint is additive)', () => {
+            const err = new RenderError('Container render failed', skewStderr(), 2, 'compile');
+            const structured = mapRenderError(err, resolved('root.AddChildren({ a });', 0));
+
+            expect(structured.message).to.equal('‘class Dali::Ui::FlexLayout’ has no member named ‘AddChildren’');
+            expect(structured.message).to.not.contain('skew');
+        });
+
+        it('omits `hint` entirely for an ordinary compile error', () => {
+            const gccLine = userCodeOffset() + 1;
+            const stderr = `/work/preview_harness.cpp:${gccLine}:1: error: expected ';' before '}' token`;
+            const err = new RenderError('Container render failed', stderr, 2, 'compile');
+
+            expect(mapRenderError(err, resolved('return X;', 0))).to.not.have.property('hint');
+        });
+    });
 });
