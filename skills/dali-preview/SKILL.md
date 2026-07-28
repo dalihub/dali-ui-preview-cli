@@ -88,8 +88,8 @@ There are **two runtimes** — `doctor` reports both; **Docker is the default**:
 ## Writing DALi UI that compiles (current dali-ui API)
 
 dali-ui is **non-fluent**: setters return `void`, so do **not** chain. Declare a named
-local, call setters as separate statements, add children with `AddChildren({ ... })`, then
-`return` the root:
+local, call setters as separate statements, add children one at a time with `Add(child)`,
+then `return` the root:
 
 ```cpp
 FlexLayout root = FlexLayout::New();
@@ -101,11 +101,13 @@ Label title = Label::New("Hello");
 title.SetFontSize(48);
 title.SetTextColor(UiColor(0xFFFFFF));
 
-root.AddChildren({ title });
+root.Add(title);
 return root;
 ```
 
 The OLD fluent style (`Type::New().SetX().SetY().Children({...})`) will **not** compile.
+Neither will `AddChildren({ ... })`: dali-ui **2.5.30 removed it**. Use one `Add(child)`
+call per child — that is the inherited `Actor::Add`, present in every dali-ui version.
 
 **Building widgets / unknown names.** There's no special Button or TextField to learn —
 compose cards, fields, and buttons from `FlexLayout`/`View` panels (`SetCornerRadius`,

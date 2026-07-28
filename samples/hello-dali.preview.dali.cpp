@@ -11,8 +11,8 @@
 // recomputes for the new dimensions.
 //
 // dali-ui uses a non-fluent builder API: declare a named local, call the
-// setters as separate statements, add children with AddChildren, then
-// return the root.
+// setters as separate statements, add children one at a time with Add(),
+// then return the root.
 
 FlexLayout root = FlexLayout::New();
 root.SetDirection(FlexDirection::COLUMN);
@@ -30,8 +30,6 @@ Label subtitle = Label::New("Edit this file to see the preview update");
 subtitle.SetFontSize(18);
 subtitle.SetTextColor(UiColor(0x888899));
 
-root.AddChildren({
-    title,
-    subtitle,
-});
+root.Add(title);
+root.Add(subtitle);
 return root;

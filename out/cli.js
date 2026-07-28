@@ -50,10 +50,12 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.DOCKER_UNAVAILABLE_MESSAGE = void 0;
 exports.unsupportedPlatformMessage = unsupportedPlatformMessage;
 exports.parseRenderArgs = parseRenderArgs;
 exports.resolveRenderConfig = resolveRenderConfig;
 exports.resolveImageRefAuto = resolveImageRefAuto;
+exports.ensureImageForRender = ensureImageForRender;
 exports.attachMeta = attachMeta;
 exports.mapRenderError = mapRenderError;
 const fs = __importStar(require("fs"));
@@ -147,7 +149,7 @@ const USAGE = 'Usage: dali-ui-preview-cli <input.cpp | -> [--image <out.png>]\n'
     '       dali-ui-preview-cli <input.cpp> --theme dark|light     (background theme, default dark)\n' +
     '       dali-ui-preview-cli <input.cpp> --dpr N                (device-pixel ratio, default 1)\n' +
     '       dali-ui-preview-cli <input.cpp> --image-tag <tag>      (runtime image tag for THIS render, default latest)\n' +
-    '       dali-ui-preview-cli <input.cpp> --image <name>         (override the runtime image name; advanced)\n' +
+    '       dali-ui-preview-cli <input.cpp> --runtime-image <name> (override the runtime image name; advanced)\n' +
     '       dali-ui-preview-cli <input.cpp> --runtime docker|local (render backend; default docker)\n' +
     '       dali-ui-preview-cli <input.cpp> --local                (shorthand for --runtime local)\n' +
     '       dali-ui-preview-cli <input.cpp> --dali-prefix <path>   (native DALi install for --runtime local)\n' +
@@ -185,8 +187,9 @@ const USAGE = 'Usage: dali-ui-preview-cli <input.cpp | -> [--image <out.png>]\n'
     'Runtime versions track DALi releases (e.g. dali_2.5.18), plus the rolling `latest`.\n' +
     '--list-versions prints the available runtime image versions (remote ∪ local, each\n' +
     'marked local/current) as JSON; --pull [<tag>] downloads a tag (default latest);\n' +
-    '--image-tag <tag> selects the tag for THIS render (default latest); --image <name>\n' +
-    'overrides the runtime image name. --list-versions / --pull do NOT render.\n' +
+    '--image-tag <tag> selects the tag for THIS render (default latest); --runtime-image\n' +
+    '<name> overrides the runtime image name (--image is the output PNG, not the image\n' +
+    'name). --list-versions / --pull do NOT render.\n' +
     '\n' +
     'Exit codes: 0 ok; 1 usage error or empty input; 10 compile error (in your code);\n' +
     '11 render/capture error; 12 docker unavailable; 20 verify diff mismatch.\n' +
@@ -806,6 +809,34 @@ function computeSlice(resolved) {
         : { globals: '', body, heuristic: false, helperPaths: [] };
 }
 /**
+ * The exact message {@link handleRenderFailure} pattern-matches to return
+ * {@link EXIT.DOCKER_UNAVAILABLE} (12); `dockerRunner`'s own preflight throws the
+ * same text, so both entry points stay one documented failure class.
+ */
+exports.DOCKER_UNAVAILABLE_MESSAGE = 'Docker is not available: `docker info` failed. Ensure Docker is ' +
+    'installed, the daemon is running, and the current user can access the Docker socket.';
+/**
+ * Ensure the runtime image for a docker render, re-classifying a "no Docker at all"
+ * host correctly.
+ *
+ * The image ensure/pull runs BEFORE `renderInContainerAt`'s `docker info` preflight,
+ * so on a host with no Docker every `docker pull` simply failed and the user got the
+ * generic multi-registry "could not download the image" text plus exit 1 — never the
+ * documented exit 12, and never the actual reason ("you have no Docker"). Probing
+ * only after a failure keeps the happy path free of an extra `docker info`.
+ */
+async function ensureImageForRender(image, tag, deps) {
+    try {
+        return (await deps.ensure(image, tag)).tag;
+    }
+    catch (err) {
+        if (!(await deps.dockerAvailable())) {
+            throw new Error(exports.DOCKER_UNAVAILABLE_MESSAGE);
+        }
+        throw err; // Docker is fine — a genuine registry/network failure; keep its guidance.
+    }
+}
+/**
  * Resolve the runtime context for a render: the mode (flag → env → config →
  * docker), the docker image coordinates, the optional native DALi prefix, and the
  * base directory used to locate `.dali/config.json` and a native prefix (the input
@@ -824,7 +855,10 @@ async function resolveRuntimeContext(parsed, resolved) {
     // failing the render. Agents call render directly (no prior `--pull`), so this can't rely on one.
     // No-op when the image is already local. Local mode doesn't use the image.
     const tag = mode === 'docker'
-        ? (await (0, imageManager_1.ensureImageWithRegistryFallback)(ref.image, ref.tag, makeEnsureDeps(baseDir))).tag
+        ? await ensureImageForRender(ref.image, ref.tag, {
+            ensure: (image, wanted) => (0, imageManager_1.ensureImageWithRegistryFallback)(image, wanted, makeEnsureDeps(baseDir)),
+            dockerAvailable: dockerRunner_1.isDockerAvailable,
+        })
         : ref.tag;
     return {
         mode,
@@ -1138,18 +1172,26 @@ async function runPull(parsed) {
 function mapRenderError(err, resolved) {
     const offset = (0, harnessTemplater_1.userCodeOffset)();
     const parsed = (0, errorParser_1.parseGccErrors)(err.stderr, offset);
+    // A runtime-API-skew failure ALWAYS maps to a user line, so it takes the structured
+    // branch below — which is exactly why the hint has to be attached here and not left
+    // to formatRawError's fallback path (where it could never fire for this case).
+    const hint = (0, errorParser_1.detectRuntimeApiSkew)(err.stderr) ? errorParser_1.RUNTIME_API_SKEW_HINT.trim() : undefined;
     if (parsed.length > 0) {
         const first = parsed[0];
         return {
             phase: err.phase,
             message: first.message,
             sourceLine: first.line + (resolved.startLine ?? 0) + 1,
+            ...(hint ? { hint } : {}),
         };
     }
     return {
         phase: err.phase,
+        // formatRawError already appends the hint inline on this path; keep `hint` set too
+        // so a machine reader sees the same signal regardless of which branch was taken.
         message: (0, errorParser_1.formatRawError)(err.stderr),
         sourceLine: null,
+        ...(hint ? { hint } : {}),
     };
 }
 /**

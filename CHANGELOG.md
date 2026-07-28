@@ -2,6 +2,40 @@
 
 ## [Unreleased]
 
+### Fixed
+- **dali-ui 2.5.30 removed `View::AddChildren` — the bundled samples and agent docs no longer use it.**
+  Every sample and both agent instruction files (`templates/agent-verification-loop.md`,
+  `skills/dali-preview/SKILL.md`) now add children with one inherited `Actor::Add(child)` call each,
+  which compiles on **every** dali-ui version (verified rendering all 5 samples on 2.5.29 *and* 2.5.30;
+  the rewritten samples produce **byte-identical** PNGs and trees on 2.5.29). Before this, a first-time
+  `init` against the current `latest` runtime always failed its smoke render, and the agent docs were
+  teaching coding agents an API the runtime had dropped.
+- **`init` no longer reports success when it could not actually render.** A failed image pull or a failed
+  smoke render printed `✅ … is agent-ready` and exited **0**, so any agent or CI step gating on `init`
+  walked straight into a broken loop. Both paths now print `❌ … is NOT ready` with the `doctor` next step
+  and propagate the child's exit code (10 compile / 11 render / 12 docker). The "no runtime installed yet"
+  path is unchanged (exit 0): nothing was attempted there, and it already says so.
+- **A render on a host with no Docker now exits `12` as documented, instead of `1`.** The runtime image is
+  ensured *before* `renderInContainerAt`'s `docker info` preflight, so a Docker-less host failed every pull
+  first and surfaced the generic "Could not download the DALi runtime image" text with exit 1 — the real
+  cause never appeared and the documented exit 12 was unreachable from a bare render. The probe runs only
+  after an ensure failure, so the happy path costs nothing extra.
+- **`--baseline` verify now catches a changed label string.** The id-keyed tree diff compares `text`
+  alongside `type`/`role`/`name`/`sourceLine`. Re-lettering a label moves only a few hundred of ~1e6
+  pixels — three orders of magnitude under the default `--threshold` (0.01) — so the image diff passed and
+  a verify of a screen whose copy had changed reported `match: true` and exit 0. It now reports
+  `changed:[{fields:["text"]}]` and exit 20.
+- **The runtime-API-skew hint actually reaches users now.** The hint was appended only inside
+  `formatRawError`, i.e. only on the branch taken when *no* g++ line maps — but a real skew error always
+  maps to a source line, so it took the structured branch and the hint had never once surfaced. It is now
+  attached to the structured error as an **additive** optional `hint` field (`message` keeps its exact
+  compiler text, so existing parsers are unaffected). The wording also covers **both** skew directions: the
+  signature cannot tell a stale image (missing an API) from a newer image that *removed* one, and 2.5.30
+  made the second case real.
+- **`--help` named the wrong flag for the runtime-image override.** It advertised `--image <name>`, which is
+  actually the output-PNG path — following it wrote a PNG to a file named after the image. The override is
+  `--runtime-image <name>`.
+
 ### Changed
 - **Removed WSL/Windows references — not a supported platform.** The README (EN/KO) no longer suggests
   running under WSL2; the unsupported-platform message and its doc comments now point Windows/macOS

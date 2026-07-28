@@ -16,14 +16,21 @@ exports.formatRawError = formatRawError;
 exports.formatErrorsForDisplay = formatErrorsForDisplay;
 const skewSignature_1 = require("./skewSignature");
 /**
- * Actionable hint appended when the compile failure looks like a dali-ui
- * runtime-API skew (a member the runtime image no longer has). The fix is to
- * refresh the runtime image (`dali-ui-preview --pull` / a newer tag), NOT to
- * change the preview code. Mirrors the extension's RUNTIME_API_SKEW_HINT.
+ * Actionable hint attached when the compile failure looks like a dali-ui
+ * runtime-API skew — the code and the runtime image disagree about a member.
+ *
+ * The signature (`'class Dali::…' has no member named 'X'`) cannot tell WHICH side
+ * is ahead, and both directions really happen: an old image missing an API the code
+ * uses, and (since dali-ui 2.5.30 dropped `View::AddChildren`) a NEW image that has
+ * removed an API the code still calls. So the hint names both and points at the
+ * `dali-ui runtime:` line the CLI already prints, instead of asserting one fix.
  */
-exports.RUNTIME_API_SKEW_HINT = '\n\nThis looks like a stale DALi runtime: the image is missing a dali-ui ' +
-    'API this build uses. Refresh the runtime image (pull the latest / matching ' +
-    'tag) rather than changing the preview code.';
+exports.RUNTIME_API_SKEW_HINT = '\n\nThis looks like DALi runtime/API skew: the runtime image and this code ' +
+    'disagree about a dali-ui API. Either the image is stale (pull a newer tag), or ' +
+    'the image is newer and has REMOVED an API the code still calls (update the ' +
+    'code — e.g. dali-ui 2.5.30 dropped View::AddChildren in favour of one Add(child) ' +
+    'call per child). Compare the `dali-ui runtime:` version printed above with the ' +
+    'API your code targets, and pin a known-good tag with --image-tag.';
 /** True when g++ stderr carries the dali-ui runtime-API-skew signature. */
 function detectRuntimeApiSkew(stderr) {
     return (0, skewSignature_1.isRuntimeApiSkew)(stderr);

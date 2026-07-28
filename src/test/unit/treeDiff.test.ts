@@ -48,6 +48,11 @@ function clone(node: MinimalNode): MinimalNode {
     return JSON.parse(JSON.stringify(node)) as MinimalNode;
 }
 
+/** The label node of a fixture tree, where the interesting scalar fields live. */
+function labelOf(tree: MinimalNode): MinimalNode {
+    return (tree.children as MinimalNode[])[1].children![0];
+}
+
 describe('treeDiff (F4.2)', () => {
     it('a tree diffed against itself → all three sets empty', () => {
         const res = treeDiff(fixtureTree(), fixtureTree());
@@ -150,5 +155,43 @@ describe('treeDiff (F4.2)', () => {
 
         expect(res.changed.map((c) => c.id)).to.deep.equal(['0']);
         expect(res.changed[0].fields).to.deep.equal(['bounds']);
+    });
+
+    // Regression: re-lettering a label used to slip through verify entirely. The image
+    // diff cannot save us (a text swap moves ~1e2 of ~1e6 pixels, three orders of
+    // magnitude under the 0.01 default threshold), so the tree diff has to catch it.
+    it('a changed label text → that id reported in changed with field "text"', () => {
+        const current = fixtureTree();
+        labelOf(current).text = '72%';
+        const target = clone(current);
+        labelOf(target).text = '41%';
+
+        const res = treeDiff(current, target);
+
+        expect(res.changed.map((c) => c.id)).to.deep.equal(['0/1/0']);
+        expect(res.changed[0].fields).to.deep.equal(['text']);
+    });
+
+    it('identical text on both sides is not reported', () => {
+        const current = fixtureTree();
+        labelOf(current).text = 'Apply';
+        const target = clone(current);
+
+        expect(treeDiff(current, target).changed).to.deep.equal([]);
+    });
+
+    it('places "text" between "name" and "sourceLine" in the canonical field order', () => {
+        const current = fixtureTree();
+        labelOf(current).text = 'before';
+        const target = clone(current);
+        const tgtLabel = labelOf(target);
+        tgtLabel.type = 'TextLabel';
+        tgtLabel.name = 'Goodbye';
+        tgtLabel.text = 'after';
+        tgtLabel.sourceLine = 99;
+
+        const res = treeDiff(current, target);
+
+        expect(res.changed[0].fields).to.deep.equal(['type', 'name', 'text', 'sourceLine']);
     });
 });

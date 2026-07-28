@@ -9,8 +9,8 @@
  * the CLI). Then, over the union of ids:
  *   - added   = ids present in `current` but NOT in `target`;
  *   - removed = ids present in `target` but NOT in `current`;
- *   - changed = ids present in BOTH whose `type` / `role` / `name` / `sourceLine`
- *               differ, or whose `bounds` differ (deep compare of x,y,w,h).
+ *   - changed = ids present in BOTH whose `type` / `role` / `name` / `text` /
+ *               `sourceLine` differ, or whose `bounds` differ (deep compare of x,y,w,h).
  *
  * Output ordering is deterministic (Inv-3): every list is sorted by `id`, and each
  * changed entry's `fields` are in a fixed canonical order. The diff is a pure
@@ -49,8 +49,14 @@ export interface TreeDiffResult {
 /**
  * Scalar fields compared for a `changed` verdict, in the canonical order they are
  * reported. `bounds` is handled separately (deep compare) and appended last.
+ *
+ * `text` is in the set because a label's rendered STRING is the single most common
+ * thing a UI regression changes, and the image diff cannot be relied on to catch it:
+ * re-lettering a label moves a few hundred pixels out of millions, which stays far
+ * under the default `--threshold` (0.01). Without `text` here a verify pass reported
+ * `match: true` for a screen whose copy had changed.
  */
-const SCALAR_FIELDS = ['type', 'role', 'name', 'sourceLine'] as const;
+const SCALAR_FIELDS = ['type', 'role', 'name', 'text', 'sourceLine'] as const;
 
 /** Index every node of `root` by its `id` (last writer wins on a duplicate id). */
 function indexById(root: MinimalNode): Map<string, MinimalNode> {
@@ -87,8 +93,8 @@ function boundsEqual(a: unknown, b: unknown): boolean {
 
 /**
  * Collect the names of the fields that differ between `cur` and `tgt`, in canonical
- * order: the scalar fields (`type`,`role`,`name`,`sourceLine`) first, then `bounds`.
- * Scalars are compared with strict `!==`; `bounds` with {@link boundsEqual}.
+ * order: the scalar fields (`type`,`role`,`name`,`text`,`sourceLine`) first, then
+ * `bounds`. Scalars are compared with strict `!==`; `bounds` with {@link boundsEqual}.
  */
 function changedFields(cur: MinimalNode, tgt: MinimalNode): string[] {
     const fields: string[] = [];

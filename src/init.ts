@@ -163,11 +163,20 @@ export async function runInit(argv: string[]): Promise<number> {
     const pull = await run(process.execPath, [CLI_JS, '--pull', ...runtimeImageArgs]);
     if (pull.code !== 0) {
       console.log(`⚠️  image pull failed (you can retry with --pull):\n${pull.out.trim().slice(0, 1200)}`);
-      return 0;
+      // Same contract as the smoke-render failure below: no runtime image means the
+      // project cannot render, so init must not report success with exit 0.
+      return pull.code;
     }
     console.log('  ✓ runtime image ready');
   }
 
+  // The smoke render is init's ONLY end-to-end proof that this project can actually
+  // render. When it fails the project is NOT agent-ready, so we must not print the
+  // success banner and must not exit 0 — an agent (or a CI step) that gates on
+  // `init`'s exit code would otherwise proceed into a broken loop. The child's own
+  // exit code is propagated so a caller can still branch on WHY it failed
+  // (10 compile / 11 render / 12 docker), matching the render command's contract.
+  let smokeFailure: number | undefined;
   if (!skipRender) {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'dali-init-'));
     const png = path.join(tmp, 'hello.png');
@@ -178,12 +187,22 @@ export async function runInit(argv: string[]): Promise<number> {
       console.log('  ✓ render OK');
     } else {
       console.log(`  ⚠️ smoke render failed:\n${r.out.trim().slice(0, 1200)}`);
+      smokeFailure = r.code === 0 ? 1 : r.code;
     }
     try {
       fs.rmSync(tmp, { recursive: true, force: true });
     } catch {
       /* best-effort */
     }
+  }
+
+  if (smokeFailure !== undefined) {
+    console.log('');
+    console.log(`❌ ${path.basename(dir)} is NOT ready: the instruction files were written, but the`);
+    console.log('   smoke render above failed, so rendering does not work here yet.');
+    console.log('   Diagnose the environment with:  dali-ui-preview-cli doctor');
+    console.log('   Then re-run:                    dali-ui-preview-cli init .');
+    return smokeFailure;
   }
 
   console.log('');
