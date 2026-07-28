@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.12.1] - 2026-07-28
+
 ### Fixed
 - **dali-ui 2.5.30 removed `View::AddChildren` — the bundled samples and agent docs no longer use it.**
   Every sample and both agent instruction files (`templates/agent-verification-loop.md`,
@@ -41,6 +43,12 @@
   running under WSL2; the unsupported-platform message and its doc comments now point Windows/macOS
   users to a Linux VM or a remote Linux host (exit `14` behavior unchanged). Adds an internal
   Windows/WSL2 feasibility assessment (`docs/wsl-windows-compatibility.md`) marked NOT supported.
+
+### Removed
+- **The GitHub Actions CI workflow.** Verification is local (`npm test` + `tests/e2e/render-modes.sh`
+  against a real runtime image) and releases are cut by hand. It was also misleading on the internal
+  mirror, whose GitHub Enterprise instance has no Actions runners — every push queued a run that could
+  never start.
 
 ## [0.12.0] - 2026-07-10
 
