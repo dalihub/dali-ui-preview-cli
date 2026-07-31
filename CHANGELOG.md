@@ -2,6 +2,20 @@
 
 ## [Unreleased]
 
+### Fixed
+- **dali-ui 2.5.32: `AddChildren({ ... })` now compiles.** The child adder was removed
+  upstream entirely (measured: `'class Dali::Ui::FlexLayout' has no member named
+  'AddChildren'`), but `transformVectorChildren` rewrote only the *vector* form and left the
+  init-list form alone on the assumption that an `initializer_list` overload survived. Every
+  sample using the brace idiom — including `samples/hello-dali.preview.dali.cpp` — therefore
+  failed to compile against the 2.5.32 runtime. Both forms are now rewritten into per-child
+  `.Add()` calls, mirroring the extension's `transformChildAddersToAdd` (three-component sync:
+  the two repos duplicate this logic on purpose). Verified: `test:e2e:docker` PASS against a
+  runtime image built for dali-ui 2.5.32.10995; unit 277 passing.
+
+
+## [Unreleased]
+
 ## [0.12.1] - 2026-07-28
 
 ### Fixed
