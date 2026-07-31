@@ -30,9 +30,25 @@ describe('codeTransform.transformVectorChildren', () => {
         expect(out).to.not.match(/AddChildren\(items\)/);
     });
 
-    it('leaves init-list AddChildren({ ... }) untouched', () => {
-        const src = 'root.AddChildren({ title, subtitle });';
-        expect(transformVectorChildren(src)).to.equal(src);
+    // dali-ui 2.5.32 REMOVED the child adder entirely — measured:
+    //   'class Dali::Ui::FlexLayout' has no member named 'AddChildren'
+    // so the init-list form must be rewritten too. Leaving it alone (the old
+    // assumption: "an initializer_list overload survives") made every sample using
+    // the brace form fail to compile against the 2.5.32 runtime.
+    it('rewrites init-list AddChildren({ ... }) into per-child .Add() calls', () => {
+        const out = transformVectorChildren('root.AddChildren({ title, subtitle });');
+        expect(out).to.equal('root.Add(title); root.Add(subtitle);');
+        expect(out).to.not.match(/AddChildren/);
+    });
+
+    it('rewrites a multi-line init-list (the sample idiom) and keeps nested calls intact', () => {
+        const out = transformVectorChildren([
+            'root.AddChildren({',
+            '    Label::New("a, b"),',
+            '    makeCard(x, y),',
+            '});',
+        ].join('\n'));
+        expect(out).to.equal('root.Add(Label::New("a, b")); root.Add(makeCard(x, y));');
     });
 
     it('rewrites legacy .Children(vector) into an .Add loop', () => {
