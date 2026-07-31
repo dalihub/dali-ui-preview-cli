@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.12.2] - 2026-07-31
 
 ### Fixed
 - **dali-ui 2.5.32: `AddChildren({ ... })` now compiles.** The child adder was removed
